@@ -1,0 +1,5833 @@
+2014-01-03 22:13:08 +0900
+target 0: 2.1.1p2 (ruby 2.1.1p2 (2013-12-31 revision 44467) [x86_64-linux]) at "/home/shyouhei/data/target/ruby_2_1/bin/ruby"
+target 1: 2.0.0p376 (ruby 2.0.0p376 (2013-12-25 revision 44393) [x86_64-linux]) at "/home/shyouhei/data/target/ruby_2_0_0/bin/ruby"
+target 2: 1.9.3p488 (ruby 1.9.3p488 (2013-12-22 revision 44338) [x86_64-linux]) at "/home/shyouhei/data/target/ruby_1_9_3/bin/ruby"
+target 3: built-ruby (ruby 2.2.0dev (2014-01-02 trunk 44485) [x86_64-linux]) at "./miniruby -I/home/shyouhei/data/src/ruby.git/lib -I. -I.ext/common  /home/shyouhei/data/src/ruby.git/tool/runruby.rb --extout=.ext  -- --disable-gems"
+
+-----------------------------------------------------------
+app_answer
+
+def ack(m, n)
+  if m == 0 then
+    n + 1
+  elsif n == 0 then
+    ack(m - 1, 1)
+  else
+    ack(m - 1, ack(m, n - 1))
+  end
+end
+
+def the_answer_to_life_the_universe_and_everything
+  (ack(3,7).to_s.split(//).inject(0){|s,x| s+x.to_i}.to_s + "2" ).to_i
+end
+
+answer = the_answer_to_life_the_universe_and_everything
+
+2.1.1p2	0.079001471
+2.1.1p2	0.057943092
+2.1.1p2	0.05785576
+2.0.0p376	0.077149222
+2.0.0p376	0.054868975
+2.0.0p376	0.055616937
+1.9.3p488	0.065638993
+1.9.3p488	0.054124429
+1.9.3p488	0.054177192
+built-ruby	0.054168612
+built-ruby	0.045826915
+built-ruby	0.045720215
+
+-----------------------------------------------------------
+app_aobench
+
+# AO rebder benchmark
+# Original program (C) Syoyo Fujita in Javascript (and other languages)
+#      http://lucille.atso-net.jp/blog/?p=642
+#      http://lucille.atso-net.jp/blog/?p=711
+# Ruby(yarv2llvm) version by Hideki Miura
+#
+
+IMAGE_WIDTH = 256
+IMAGE_HEIGHT = 256
+NSUBSAMPLES = 2
+NAO_SAMPLES = 8
+
+class Vec
+  def initialize(x, y, z)
+    @x = x
+    @y = y
+    @z = z
+  end
+
+  attr_accessor :x, :y, :z
+
+  def vadd(b)
+    Vec.new(@x + b.x, @y + b.y, @z + b.z)
+  end
+
+  def vsub(b)
+    Vec.new(@x - b.x, @y - b.y, @z - b.z)
+  end
+
+  def vcross(b)
+    Vec.new(@y * b.z - @z * b.y,
+            @z * b.x - @x * b.z,
+            @x * b.y - @y * b.x)
+  end
+
+  def vdot(b)
+    @x * b.x + @y * b.y + @z * b.z
+  end
+
+  def vlength
+    Math.sqrt(@x * @x + @y * @y + @z * @z)
+  end
+
+  def vnormalize
+    len = vlength
+    v = Vec.new(@x, @y, @z)
+    if len > 1.0e-17 then
+      v.x = v.x / len
+      v.y = v.y / len
+      v.z = v.z / len
+    end
+    v
+  end
+end
+
+
+class Sphere
+  def initialize(center, radius)
+    @center = center
+    @radius = radius
+  end
+
+  attr_reader :center, :radius
+
+  def intersect(ray, isect)
+    rs = ray.org.vsub(@center)
+    b = rs.vdot(ray.dir)
+    c = rs.vdot(rs) - (@radius * @radius)
+    d = b * b - c
+    if d > 0.0 then
+      t = - b - Math.sqrt(d)
+
+      if t > 0.0 and t < isect.t then
+        isect.t = t
+        isect.hit = true
+        isect.pl = Vec.new(ray.org.x + ray.dir.x * t,
+                          ray.org.y + ray.dir.y * t,
+                          ray.org.z + ray.dir.z * t)
+        n = isect.pl.vsub(@center)
+        isect.n = n.vnormalize
+      else
+        0.0
+      end
+    end
+    nil
+  end
+end
+
+class Plane
+  def initialize(p, n)
+    @p = p
+    @n = n
+  end
+
+  def intersect(ray, isect)
+    d = -@p.vdot(@n)
+    v = ray.dir.vdot(@n)
+    v0 = v
+    if v < 0.0 then
+      v0 = -v
+    end
+    if v0 < 1.0e-17 then
+      return
+    end
+
+    t = -(ray.org.vdot(@n) + d) / v
+
+    if t > 0.0 and t < isect.t then
+      isect.hit = true
+      isect.t = t
+      isect.n = @n
+      isect.pl = Vec.new(ray.org.x + t * ray.dir.x,
+                        ray.org.y + t * ray.dir.y,
+                        ray.org.z + t * ray.dir.z)
+    end
+    nil
+  end
+end
+
+class Ray
+  def initialize(org, dir)
+    @org = org
+    @dir = dir
+  end
+
+  attr_accessor :org, :dir
+end
+
+class Isect
+  def initialize
+    @t = 10000000.0
+    @hit = false
+    @pl = Vec.new(0.0, 0.0, 0.0)
+    @n = Vec.new(0.0, 0.0, 0.0)
+  end
+
+  attr_accessor :t, :hit, :pl, :n
+end
+
+def clamp(f)
+  i = f * 255.5
+  if i > 255.0 then
+    i = 255.0
+  end
+  if i < 0.0 then
+    i = 0.0
+  end
+  i.to_i
+end
+
+def otherBasis(basis, n)
+  basis[2] = Vec.new(n.x, n.y, n.z)
+  basis[1] = Vec.new(0.0, 0.0, 0.0)
+
+  if n.x < 0.6 and n.x > -0.6 then
+    basis[1].x = 1.0
+  elsif n.y < 0.6 and n.y > -0.6 then
+    basis[1].y = 1.0
+  elsif n.z < 0.6 and n.z > -0.6 then
+    basis[1].z = 1.0
+  else
+    basis[1].x = 1.0
+  end
+
+  basis[0] = basis[1].vcross(basis[2])
+  basis[0] = basis[0].vnormalize
+
+  basis[1] = basis[2].vcross(basis[0])
+  basis[1] = basis[1].vnormalize
+end
+
+class Scene
+  def initialize
+    @spheres = Array.new
+    @spheres[0] = Sphere.new(Vec.new(-2.0, 0.0, -3.5), 0.5)
+    @spheres[1] = Sphere.new(Vec.new(-0.5, 0.0, -3.0), 0.5)
+    @spheres[2] = Sphere.new(Vec.new(1.0, 0.0, -2.2), 0.5)
+    @plane = Plane.new(Vec.new(0.0, -0.5, 0.0), Vec.new(0.0, 1.0, 0.0))
+  end
+
+  def ambient_occlusion(isect)
+    basis = Array.new
+    otherBasis(basis, isect.n)
+
+    ntheta    = NAO_SAMPLES
+    nphi      = NAO_SAMPLES
+    eps       = 0.0001
+    occlusion = 0.0
+
+    p0 = Vec.new(isect.pl.x + eps * isect.n.x,
+                isect.pl.y + eps * isect.n.y,
+                isect.pl.z + eps * isect.n.z)
+    nphi.times do |j|
+      ntheta.times do |i|
+        r = rand
+        phi = 2.0 * 3.14159265 * rand
+        x = Math.cos(phi) * Math.sqrt(1.0 - r)
+        y = Math.sin(phi) * Math.sqrt(1.0 - r)
+        z = Math.sqrt(r)
+
+        rx = x * basis[0].x + y * basis[1].x + z * basis[2].x
+        ry = x * basis[0].y + y * basis[1].y + z * basis[2].y
+        rz = x * basis[0].z + y * basis[1].z + z * basis[2].z
+
+        raydir = Vec.new(rx, ry, rz)
+        ray = Ray.new(p0, raydir)
+
+        occisect = Isect.new
+        @spheres[0].intersect(ray, occisect)
+        @spheres[1].intersect(ray, occisect)
+        @spheres[2].intersect(ray, occisect)
+        @plane.intersect(ray, occisect)
+        if occisect.hit then
+          occlusion = occlusion + 1.0
+        else
+          0.0
+        end
+      end
+    end
+
+    occlusion = (ntheta.to_f * nphi.to_f - occlusion) / (ntheta.to_f * nphi.to_f)
+
+    Vec.new(occlusion, occlusion, occlusion)
+  end
+
+  def render(w, h, nsubsamples)
+    cnt = 0
+    nsf = nsubsamples.to_f
+    h.times do |y|
+      w.times do |x|
+        rad = Vec.new(0.0, 0.0, 0.0)
+
+        # Subsmpling
+        nsubsamples.times do |v|
+          nsubsamples.times do |u|
+
+            cnt = cnt + 1
+            wf = w.to_f
+            hf = h.to_f
+            xf = x.to_f
+            yf = y.to_f
+            uf = u.to_f
+            vf = v.to_f
+
+            px = (xf + (uf / nsf) - (wf / 2.0)) / (wf / 2.0)
+            py = -(yf + (vf / nsf) - (hf / 2.0)) / (hf / 2.0)
+
+            eye = Vec.new(px, py, -1.0).vnormalize
+
+            ray = Ray.new(Vec.new(0.0, 0.0, 0.0), eye)
+
+            isect = Isect.new
+            @spheres[0].intersect(ray, isect)
+            @spheres[1].intersect(ray, isect)
+            @spheres[2].intersect(ray, isect)
+            @plane.intersect(ray, isect)
+            if isect.hit then
+              col = ambient_occlusion(isect)
+              rad.x = rad.x + col.x
+              rad.y = rad.y + col.y
+              rad.z = rad.z + col.z
+            end
+          end
+        end
+
+        r = rad.x / (nsf * nsf)
+        g = rad.y / (nsf * nsf)
+        b = rad.z / (nsf * nsf)
+        printf("%c", clamp(r))
+        printf("%c", clamp(g))
+        printf("%c", clamp(b))
+      end
+      nil
+    end
+
+    nil
+  end
+end
+
+alias printf_orig printf
+def printf *args
+end
+
+# File.open("ao.ppm", "w") do |fp|
+  printf("P6\n")
+  printf("%d %d\n", IMAGE_WIDTH, IMAGE_HEIGHT)
+  printf("255\n", IMAGE_WIDTH, IMAGE_HEIGHT)
+  Scene.new.render(IMAGE_WIDTH, IMAGE_HEIGHT, NSUBSAMPLES)
+# end
+
+undef printf
+alias printf printf_orig
+
+2.1.1p2	69.425340661
+2.1.1p2	76.969075043
+2.1.1p2	77.063258853
+2.0.0p376	82.325498645
+2.0.0p376	83.275266078
+2.0.0p376	82.550487982
+1.9.3p488	141.850479982
+1.9.3p488	142.214785723
+1.9.3p488	143.239000403
+built-ruby	74.417428524
+built-ruby	74.669067858
+built-ruby	73.586082636
+
+-----------------------------------------------------------
+app_erb
+
+#
+# Create many HTML strings with ERB.
+#
+
+require 'erb'
+
+data = DATA.read
+max = 15_000
+title = "hello world!"
+content = "hello world!\n" * 10
+
+max.times{
+  ERB.new(data).result(binding)
+}
+
+__END__
+
+<html>
+  <head> <%= title %> </head>
+  <body>
+    <h1> <%= title %> </h1>
+    <p>
+      <%= content %>
+    </p>
+  </body>
+</html>
+
+2.1.1p2	1.749285703
+2.1.1p2	1.706352387
+2.1.1p2	1.71834531
+2.0.0p376	1.669561015
+2.0.0p376	1.67798542
+2.0.0p376	1.689677952
+1.9.3p488	1.698019429
+1.9.3p488	1.721693899
+1.9.3p488	1.742072523
+built-ruby	1.587804125
+built-ruby	1.54483426
+built-ruby	1.620948801
+
+-----------------------------------------------------------
+app_factorial
+
+def fact(n)
+  if(n > 1)
+    n * fact(n-1)
+  else
+    1
+  end
+end
+
+100.times {
+  fact(5000)
+}
+
+2.1.1p2	1.285994246
+2.1.1p2	1.292522684
+2.1.1p2	1.285368521
+2.0.0p376	1.744015242
+2.0.0p376	1.741873815
+2.0.0p376	1.730507917
+1.9.3p488	1.523960769
+1.9.3p488	1.517961479
+1.9.3p488	1.528667744
+built-ruby	1.278028155
+built-ruby	1.273110729
+built-ruby	1.27455148
+
+-----------------------------------------------------------
+app_fib
+
+def fib n
+  if n < 3
+    1
+  else
+    fib(n-1) + fib(n-2)
+  end
+end
+
+fib(34)
+
+
+2.1.1p2	0.733993644
+2.1.1p2	0.736293695
+2.1.1p2	0.732203911
+2.0.0p376	0.75861296
+2.0.0p376	0.762342251
+2.0.0p376	0.761132913
+1.9.3p488	1.038370887
+1.9.3p488	1.023080028
+1.9.3p488	1.04417005
+built-ruby	0.713016548
+built-ruby	0.711664791
+built-ruby	0.717230177
+
+-----------------------------------------------------------
+app_mandelbrot
+
+require 'complex'
+
+def mandelbrot? z
+  i = 0
+  while i<100
+    i += 1
+    z = z * z
+    return false if z.abs > 2
+  end
+  true
+end
+
+ary = []
+
+(0..1000).each{|dx|
+  (0..1000).each{|dy|
+    x = dx / 50.0
+    y = dy / 50.0
+    c = Complex(x, y)
+    ary << c if mandelbrot?(c)
+  }
+}
+
+
+2.1.1p2	1.756899206
+2.1.1p2	1.728683793
+2.1.1p2	1.73780253
+2.0.0p376	1.796689645
+2.0.0p376	1.854623362
+2.0.0p376	1.793703712
+1.9.3p488	2.735009308
+1.9.3p488	2.738945145
+1.9.3p488	2.75982591
+built-ruby	1.732332617
+built-ruby	1.771425547
+built-ruby	1.728179342
+
+-----------------------------------------------------------
+app_pentomino
+
+#!/usr/local/bin/ruby
+# This program is contributed by Shin Nishiyama
+
+
+# modified by K.Sasada
+
+NP = 5
+ROW = 8 + NP
+COL = 8
+
+$p = []
+$b = []
+$no = 0
+
+def piece(n, a, nb)
+  nb.each{|x|
+    a[n] = x
+    if n == NP-1
+      $p << [a.sort]
+    else
+      nbc=nb.dup
+      [-ROW, -1, 1, ROW].each{|d|
+        if x+d > 0 and not a.include?(x+d) and not nbc.include?(x+d)
+          nbc << x+d
+        end
+      }
+      nbc.delete x
+      piece(n+1,a[0..n],nbc)
+    end
+  }
+end
+
+def kikaku(a)
+  a.collect {|x| x - a[0]}
+end
+def ud(a)
+  kikaku(a.collect {|x| ((x+NP)%ROW)-ROW*((x+NP)/ROW) }.sort)
+end
+def rl(a)
+  kikaku(a.collect {|x| ROW*((x+NP)/ROW)+ROW-((x+NP)%ROW)}.sort)
+end
+def xy(a)
+  kikaku(a.collect {|x| ROW*((x+NP)%ROW) + (x+NP)/ROW }.sort)
+end
+
+def mkpieces
+  piece(0,[],[0])
+  $p.each do |a|
+    a0 = a[0]
+    a[1] = ud(a0)
+    a[2] = rl(a0)
+    a[3] = ud(rl(a0))
+    a[4] = xy(a0)
+    a[5] = ud(xy(a0))
+    a[6] = rl(xy(a0))
+    a[7] = ud(rl(xy(a0)))
+    a.sort!
+    a.uniq!
+  end
+  $p.uniq!.sort! {|x,y| x[0] <=> y[0] }
+end
+
+def mkboard
+  (0...ROW*COL).each{|i|
+    if i % ROW >= ROW-NP
+      $b[i] = -2
+    else
+      $b[i] = -1
+    end
+    $b[3*ROW+3]=$b[3*ROW+4]=$b[4*ROW+3]=$b[4*ROW+4]=-2
+  }
+end
+
+def pboard
+  return # skip print
+  print "No. #$no\n"
+  (0...COL).each{|i|
+    print "|"
+    (0...ROW-NP).each{|j|
+      x = $b[i*ROW+j]
+      if x < 0
+        print "..|"
+      else
+        printf "%2d|",x+1
+      end
+    }
+    print "\n"
+  }
+  print "\n"
+end
+
+$pnum=[]
+def setpiece(a,pos)
+  if a.length == $p.length then
+    $no += 1
+    pboard
+    return
+  end
+  while $b[pos] != -1
+    pos += 1
+  end
+  ($pnum - a).each do |i|
+    $p[i].each do |x|
+      f = 0
+      x.each{|s|
+        if $b[pos+s] != -1
+          f=1
+          break
+        end
+      }
+      if f == 0 then
+        x.each{|s|
+          $b[pos+s] = i
+        }
+        a << i
+        setpiece(a.dup, pos)
+        a.pop
+        x.each{|s|
+          $b[pos+s] = -1
+        }
+      end
+    end
+  end
+end
+
+mkpieces
+mkboard
+$p[4] = [$p[4][0]]
+$pnum = (0...$p.length).to_a
+setpiece([],0)
+
+
+__END__
+
+# original
+
+NP = 5
+ROW = 8 + NP
+COL = 8
+
+$p = []
+$b = []
+$no = 0
+
+def piece(n,a,nb)
+  for x in nb
+    a[n] = x
+    if n == NP-1
+      $p << [a.sort]
+    else
+      nbc=nb.dup
+      for d in [-ROW, -1, 1, ROW]
+        if x+d > 0 and not a.include?(x+d) and not nbc.include?(x+d)
+          nbc << x+d
+        end
+      end
+      nbc.delete x
+      piece(n+1,a[0..n],nbc)
+    end
+  end
+end
+
+def kikaku(a)
+  a.collect {|x| x - a[0]}
+end
+def ud(a)
+  kikaku(a.collect {|x| ((x+NP)%ROW)-ROW*((x+NP)/ROW) }.sort)
+end
+def rl(a)
+  kikaku(a.collect {|x| ROW*((x+NP)/ROW)+ROW-((x+NP)%ROW)}.sort)
+end
+def xy(a)
+  kikaku(a.collect {|x| ROW*((x+NP)%ROW) + (x+NP)/ROW }.sort)
+end
+
+def mkpieces
+  piece(0,[],[0])
+  $p.each do |a|
+    a0 = a[0]
+    a[1] = ud(a0)
+    a[2] = rl(a0)
+    a[3] = ud(rl(a0))
+    a[4] = xy(a0)
+    a[5] = ud(xy(a0))
+    a[6] = rl(xy(a0))
+    a[7] = ud(rl(xy(a0)))
+    a.sort!
+    a.uniq!
+  end
+  $p.uniq!.sort! {|x,y| x[0] <=> y[0] }
+end
+
+def mkboard
+  for i in 0...ROW*COL
+    if i % ROW >= ROW-NP
+      $b[i] = -2
+    else
+      $b[i] = -1
+    end
+    $b[3*ROW+3]=$b[3*ROW+4]=$b[4*ROW+3]=$b[4*ROW+4]=-2
+  end
+end
+
+def pboard
+  print "No. #$no\n"
+  for i in 0...COL
+    print "|"
+    for j in 0...ROW-NP
+      x = $b[i*ROW+j]
+      if x < 0
+        print "..|"
+      else
+        printf "%2d|",x+1
+      end
+    end
+    print "\n"
+  end
+  print "\n"
+end
+
+$pnum=[]
+def setpiece(a,pos)
+  if a.length == $p.length then
+    $no += 1
+    pboard
+    return
+  end
+  while $b[pos] != -1
+    pos += 1
+  end
+  ($pnum - a).each do |i|
+    $p[i].each do |x|
+      f = 0
+      for s in x do
+        if $b[pos+s] != -1
+          f=1
+          break
+        end
+      end
+      if f == 0 then
+        for s in x do
+          $b[pos+s] = i
+        end
+        a << i
+        setpiece(a.dup, pos)
+        a.pop
+        for s in x do
+          $b[pos+s] = -1
+        end
+      end
+    end
+  end
+end
+
+mkpieces
+mkboard
+$p[4] = [$p[4][0]]
+$pnum = (0...$p.length).to_a
+setpiece([],0)
+
+2.1.1p2	25.394053993
+2.1.1p2	25.459113256
+2.1.1p2	25.480115296
+2.0.0p376	25.822064117
+2.0.0p376	25.990280032
+2.0.0p376	25.792839253
+1.9.3p488	25.658088086
+1.9.3p488	25.688708975
+1.9.3p488	25.811847585
+built-ruby	25.374510447
+built-ruby	25.101892705
+built-ruby	25.333633604
+
+-----------------------------------------------------------
+app_raise
+
+i = 0
+while i<300000
+  i += 1
+  begin
+    raise
+  rescue
+  end
+end
+
+2.1.1p2	0.535205432
+2.1.1p2	0.531574438
+2.1.1p2	0.533359319
+2.0.0p376	0.470360955
+2.0.0p376	0.481481432
+2.0.0p376	0.465260774
+1.9.3p488	0.68522312
+1.9.3p488	0.688301612
+1.9.3p488	0.690771909
+built-ruby	0.520395272
+built-ruby	0.52868439
+built-ruby	0.534823023
+
+-----------------------------------------------------------
+app_strconcat
+
+i = 0
+while i<2_000_000
+  "#{1+1} #{1+1} #{1+1}"
+  i += 1
+end
+
+2.1.1p2	2.12605135
+2.1.1p2	2.044499507
+2.1.1p2	2.07114782
+2.0.0p376	1.958635401
+2.0.0p376	1.921604131
+2.0.0p376	1.932386662
+1.9.3p488	2.132333906
+1.9.3p488	2.150463068
+1.9.3p488	2.13620292
+built-ruby	1.963557725
+built-ruby	2.084457316
+built-ruby	1.97384775
+
+-----------------------------------------------------------
+app_tak
+
+
+def tak x, y, z
+  unless y < x
+    z
+  else
+    tak( tak(x-1, y, z),
+         tak(y-1, z, x),
+         tak(z-1, x, y))
+  end
+end
+
+tak(18, 9, 0)
+
+
+2.1.1p2	1.254232024
+2.1.1p2	1.066797704
+2.1.1p2	1.053908691
+2.0.0p376	1.078330663
+2.0.0p376	1.089050031
+2.0.0p376	1.118363391
+1.9.3p488	1.54047083
+1.9.3p488	1.519832716
+1.9.3p488	1.53134639
+built-ruby	1.043838494
+built-ruby	1.049557738
+built-ruby	1.033060655
+
+-----------------------------------------------------------
+app_tarai
+
+def tarai( x, y, z )
+  if x <= y
+  then y
+  else tarai(tarai(x-1, y, z),
+             tarai(y-1, z, x),
+             tarai(z-1, x, y))
+  end
+end
+
+tarai(12, 6, 0)
+
+2.1.1p2	0.865043604
+2.1.1p2	0.876291788
+2.1.1p2	0.890482772
+2.0.0p376	0.908662752
+2.0.0p376	0.90376786
+2.0.0p376	0.907304761
+1.9.3p488	1.245148684
+1.9.3p488	1.212351573
+1.9.3p488	1.211816705
+built-ruby	0.918461365
+built-ruby	0.858298238
+built-ruby	0.877273137
+
+-----------------------------------------------------------
+app_uri
+
+require 'uri'
+
+100_000.times{
+  uri = URI.parse('http://www.ruby-lang.org')
+  uri.scheme
+  uri.host
+  uri.port
+}
+
+2.1.1p2	1.072664847
+2.1.1p2	1.08318319
+2.1.1p2	1.0798666
+2.0.0p376	1.160840933
+2.0.0p376	1.152138077
+2.0.0p376	1.132281696
+1.9.3p488	1.016699384
+1.9.3p488	1.01039743
+1.9.3p488	1.013173711
+built-ruby	1.030709277
+built-ruby	1.039832666
+built-ruby	1.030203523
+
+-----------------------------------------------------------
+hash_flatten
+
+h = {}
+
+10000.times do |i|
+  h[i] = nil
+end
+
+1000.times do
+  h.flatten
+end
+
+2.1.1p2	1.093450256
+2.1.1p2	1.072834489
+2.1.1p2	1.059204883
+2.0.0p376	4.806619731
+2.0.0p376	4.829730743
+2.0.0p376	4.820447539
+1.9.3p488	5.036770665
+1.9.3p488	4.964707995
+1.9.3p488	4.995842551
+built-ruby	1.065245552
+built-ruby	1.094629593
+built-ruby	1.072202417
+
+-----------------------------------------------------------
+hash_keys
+
+h = {}
+
+10000.times do |i|
+  h[i] = nil
+end
+
+5000.times do
+  h.keys
+end
+
+2.1.1p2	0.48464151
+2.1.1p2	0.488808423
+2.1.1p2	0.481457345
+2.0.0p376	4.946435108
+2.0.0p376	4.921745778
+2.0.0p376	4.973200177
+1.9.3p488	4.755155348
+1.9.3p488	4.802404248
+1.9.3p488	4.819967973
+built-ruby	0.440614797
+built-ruby	0.447680953
+built-ruby	0.448429104
+
+-----------------------------------------------------------
+hash_shift
+
+h = {}
+
+10000.times do |i|
+  h[i] = nil
+end
+
+50000.times do
+  k, v = h.shift
+  h[k] = v
+end
+
+2.1.1p2	0.07101143
+2.1.1p2	0.073897441
+2.1.1p2	0.074029246
+2.0.0p376	7.25662479
+2.0.0p376	7.505232385
+2.0.0p376	7.933590328
+1.9.3p488	0.045627937
+1.9.3p488	0.048452292
+1.9.3p488	0.04904537
+built-ruby	0.055669542
+built-ruby	0.056166952
+built-ruby	0.059682668
+
+-----------------------------------------------------------
+hash_values
+
+h = {}
+
+10000.times do |i|
+  h[i] = nil
+end
+
+5000.times do
+  h.values
+end
+
+2.1.1p2	0.487204331
+2.1.1p2	0.465978246
+2.1.1p2	0.464859686
+2.0.0p376	4.985229613
+2.0.0p376	5.016448687
+2.0.0p376	4.949670954
+1.9.3p488	4.734046374
+1.9.3p488	4.791969983
+1.9.3p488	4.703456458
+built-ruby	0.439269008
+built-ruby	0.440311825
+built-ruby	0.442602625
+
+-----------------------------------------------------------
+io_file_create
+
+#
+# Create files
+#
+
+max = 200_000
+file = './tmpfile_of_bm_io_file_create'
+
+max.times{
+  f = open(file, 'w')
+  f.close#(true)
+}
+File.unlink(file)
+
+
+2.1.1p2	3.200149475
+2.1.1p2	3.122910371
+2.1.1p2	3.096148731
+2.0.0p376	3.088906599
+2.0.0p376	3.033186914
+2.0.0p376	3.015205328
+1.9.3p488	3.014382965
+1.9.3p488	2.973884146
+1.9.3p488	2.975148865
+built-ruby	3.040699554
+built-ruby	3.1102514
+built-ruby	3.156787392
+
+-----------------------------------------------------------
+io_file_read
+
+#
+# Seek and Read file.
+#
+
+require 'tempfile'
+
+max = 200_000
+str = "Hello world!  " * 1000
+f = Tempfile.new('yarv-benchmark')
+f.write str
+
+max.times{
+  f.seek 0
+  f.read
+}
+
+2.1.1p2	1.687088354
+2.1.1p2	1.852802979
+2.1.1p2	1.684822657
+2.0.0p376	3.43023949
+2.0.0p376	3.308704108
+2.0.0p376	3.334191694
+1.9.3p488	3.376634203
+1.9.3p488	3.419459798
+1.9.3p488	3.332819531
+built-ruby	1.648188427
+built-ruby	1.734275095
+built-ruby	1.750423473
+
+-----------------------------------------------------------
+io_file_write
+
+#
+# Seek and Write file.
+#
+
+require 'tempfile'
+
+max = 200_000
+str = "Hello world!  " * 1000
+f = Tempfile.new('yarv-benchmark')
+
+max.times{
+  f.seek 0
+  f.write str
+}
+
+2.1.1p2	1.420462147
+2.1.1p2	1.438970976
+2.1.1p2	1.382406163
+2.0.0p376	1.389655399
+2.0.0p376	1.463264742
+2.0.0p376	1.38747586
+1.9.3p488	1.330121572
+1.9.3p488	1.312064771
+1.9.3p488	1.310651587
+built-ruby	1.365101591
+built-ruby	1.45021982
+built-ruby	1.399518526
+
+-----------------------------------------------------------
+io_select
+
+# IO.select performance
+
+w = [ IO.pipe[1] ];
+
+nr = 1000000
+nr.times {
+  IO.select nil, w
+}
+
+
+2.1.1p2	2.015763139
+2.1.1p2	2.008971412
+2.1.1p2	2.006046833
+2.0.0p376	1.94879247
+2.0.0p376	1.984501954
+2.0.0p376	1.966673831
+1.9.3p488	1.794977372
+1.9.3p488	1.783085189
+1.9.3p488	1.755904049
+built-ruby	1.939105881
+built-ruby	1.990485696
+built-ruby	1.944771803
+
+-----------------------------------------------------------
+io_select2
+
+# IO.select performance. worst case of single fd.
+
+ios = []
+nr = 1000000
+if defined?(Process::RLIMIT_NOFILE)
+  max = Process.getrlimit(Process::RLIMIT_NOFILE)[0]
+else
+  max = 64
+end
+puts "max fd: #{max} (results not apparent with <= 1024 max fd)"
+
+((max / 2) - 10).times do
+  ios.concat IO.pipe
+end
+
+last = [ ios[-1] ]
+puts "last IO: #{last[0].inspect}"
+
+nr.times do
+  IO.select nil, last
+end
+
+
+2.1.1p2	2.277549168
+2.1.1p2	2.285405977
+2.1.1p2	2.27258254
+2.0.0p376	2.203796563
+2.0.0p376	2.211722523
+2.0.0p376	2.219968651
+1.9.3p488	2.033182669
+1.9.3p488	2.047188446
+1.9.3p488	2.045441076
+built-ruby	2.21794788
+built-ruby	2.233898538
+built-ruby	2.247271811
+
+-----------------------------------------------------------
+io_select3
+
+# IO.select performance. a lot of fd
+
+ios = []
+nr = 100
+if defined?(Process::RLIMIT_NOFILE)
+  max = Process.getrlimit(Process::RLIMIT_NOFILE)[0]
+else
+  max = 64
+end
+puts "max fd: #{max} (results not apparent with <= 1024 max fd)"
+
+(max - 10).times do
+  r, w = IO.pipe
+  r.close
+  ios.push w
+end
+
+nr.times do
+  IO.select nil, ios
+end
+
+
+2.1.1p2	0.061801228
+2.1.1p2	0.062767648
+2.1.1p2	0.064186725
+2.0.0p376	0.061113782
+2.0.0p376	0.061118522
+2.0.0p376	0.061262032
+1.9.3p488	0.041331125
+1.9.3p488	0.042962465
+1.9.3p488	0.069498372
+built-ruby	0.073670165
+built-ruby	0.063006516
+built-ruby	0.058922492
+
+-----------------------------------------------------------
+loop_for
+
+for i in 1..30_000_000
+  #
+end
+
+2.1.1p2	1.949608466
+2.1.1p2	1.939432353
+2.1.1p2	1.935497347
+2.0.0p376	2.159024353
+2.0.0p376	1.982051848
+2.0.0p376	1.971469542
+1.9.3p488	2.118480324
+1.9.3p488	2.106888263
+1.9.3p488	2.138650568
+built-ruby	1.934366687
+built-ruby	1.915405986
+built-ruby	1.920339613
+
+-----------------------------------------------------------
+loop_generator
+
+max = 600000
+
+if defined? Fiber
+  gen = (1..max).each
+  loop do
+    gen.next
+  end
+else
+  require 'generator'
+  gen = Generator.new((0..max))
+  while gen.next?
+    gen.next
+  end
+end
+
+2.1.1p2	0.644192961
+2.1.1p2	0.651344865
+2.1.1p2	0.654675201
+2.0.0p376	0.655064356
+2.0.0p376	0.655673535
+2.0.0p376	0.652626391
+1.9.3p488	0.650265601
+1.9.3p488	0.653277908
+1.9.3p488	0.653827594
+built-ruby	0.625932119
+built-ruby	0.626175219
+built-ruby	0.624536128
+
+-----------------------------------------------------------
+loop_times
+
+30_000_000.times{|e|}
+
+2.1.1p2	1.8933814
+2.1.1p2	1.816698522
+2.1.1p2	1.78067384
+2.0.0p376	1.811918606
+2.0.0p376	1.808197164
+2.0.0p376	1.862652899
+1.9.3p488	1.88436647
+1.9.3p488	1.882195366
+1.9.3p488	1.887960761
+built-ruby	1.76495453
+built-ruby	1.828411768
+built-ruby	1.78164165
+
+-----------------------------------------------------------
+loop_whileloop
+
+i = 0
+while i<30_000_000 # benchmark loop 1
+  i += 1
+end
+
+2.1.1p2	0.965615672
+2.1.1p2	0.965471771
+2.1.1p2	0.971880391
+2.0.0p376	1.006675627
+2.0.0p376	1.014553397
+2.0.0p376	1.009214128
+1.9.3p488	0.996054099
+1.9.3p488	0.999761145
+1.9.3p488	0.995366346
+built-ruby	0.947786809
+built-ruby	0.949830198
+built-ruby	0.947861735
+
+-----------------------------------------------------------
+loop_whileloop2
+
+i = 0
+while i< 6_000_000 # benchmark loop 2
+  i += 1
+end
+
+2.1.1p2	0.227992575
+2.1.1p2	0.227535821
+2.1.1p2	0.225819288
+2.0.0p376	0.228381589
+2.0.0p376	0.228313692
+2.0.0p376	0.229365057
+1.9.3p488	0.213540028
+1.9.3p488	0.218287143
+1.9.3p488	0.214444554
+built-ruby	0.206572538
+built-ruby	0.208076531
+built-ruby	0.205972213
+
+-----------------------------------------------------------
+so_ackermann
+
+#!/usr/bin/ruby
+# -*- mode: ruby -*-
+# $Id: ackermann-ruby.code,v 1.4 2004/11/13 07:40:41 bfulgham Exp $
+# http://www.bagley.org/~doug/shootout/
+
+def ack(m, n)
+    if m == 0 then
+        n + 1
+    elsif n == 0 then
+        ack(m - 1, 1)
+    else
+        ack(m - 1, ack(m, n - 1))
+    end
+end
+
+NUM = 9
+ack(3, NUM)
+
+
+
+2.1.1p2	0.919471202
+2.1.1p2	0.90475102
+2.1.1p2	0.900102668
+2.0.0p376	0.92744216
+2.0.0p376	0.91978071
+2.0.0p376	0.923394939
+1.9.3p488	1.155061648
+1.9.3p488	1.157337226
+1.9.3p488	1.146755277
+built-ruby	0.890950672
+built-ruby	0.888476761
+built-ruby	0.895495539
+
+-----------------------------------------------------------
+so_array
+
+#!/usr/bin/ruby
+# -*- mode: ruby -*-
+# $Id: ary-ruby.code,v 1.4 2004/11/13 07:41:27 bfulgham Exp $
+# http://www.bagley.org/~doug/shootout/
+# with help from Paul Brannan and Mark Hubbart
+
+n = 9000 # Integer(ARGV.shift || 1)
+
+x = Array.new(n)
+y = Array.new(n, 0)
+
+n.times{|bi|
+  x[bi] = bi + 1
+}
+
+(0 .. 999).each do |e|
+  (n-1).step(0,-1) do |bi|
+    y[bi] += x.at(bi)
+  end
+end
+# puts "#{y.first} #{y.last}"
+
+
+
+2.1.1p2	1.311969305
+2.1.1p2	1.315259766
+2.1.1p2	1.32211104
+2.0.0p376	1.630070687
+2.0.0p376	1.600277574
+2.0.0p376	1.600374238
+1.9.3p488	1.979663094
+1.9.3p488	1.974931073
+1.9.3p488	1.980621516
+built-ruby	1.283354792
+built-ruby	1.297100305
+built-ruby	1.285621887
+
+-----------------------------------------------------------
+so_binary_trees
+
+# The Computer Language Shootout Benchmarks
+# http://shootout.alioth.debian.org
+#
+# contributed by Jesse Millikan
+
+# disable output
+alias puts_orig puts
+def puts str
+  # disable puts
+end
+
+def item_check(tree)
+ if tree[0] == nil
+  tree[1]
+ else
+  tree[1] + item_check(tree[0]) - item_check(tree[2])
+ end
+end
+
+def bottom_up_tree(item, depth)
+ if depth > 0
+  item_item = 2 * item
+  depth -= 1
+  [bottom_up_tree(item_item - 1, depth), item, bottom_up_tree(item_item, depth)]
+ else
+  [nil, item, nil]
+ end
+end
+
+max_depth = 16 # ARGV[0].to_i
+min_depth = 4
+
+max_depth = min_depth + 2 if min_depth + 2 > max_depth
+
+stretch_depth = max_depth + 1
+stretch_tree = bottom_up_tree(0, stretch_depth)
+
+puts "stretch tree of depth #{stretch_depth}\t check: #{item_check(stretch_tree)}"
+stretch_tree = nil
+
+long_lived_tree = bottom_up_tree(0, max_depth)
+
+min_depth.step(max_depth + 1, 2) do |depth|
+ iterations = 2**(max_depth - depth + min_depth)
+
+ check = 0
+
+ for i in 1..iterations
+  temp_tree = bottom_up_tree(i, depth)
+  check += item_check(temp_tree)
+
+  temp_tree = bottom_up_tree(-i, depth)
+  check += item_check(temp_tree)
+ end
+
+ puts "#{iterations * 2}\t trees of depth #{depth}\t check: #{check}"
+end
+
+puts "long lived tree of depth #{max_depth}\t check: #{item_check(long_lived_tree)}"
+
+undef puts
+alias puts puts_orig
+
+2.1.1p2	9.480816808
+2.1.1p2	9.412322369
+2.1.1p2	9.387130447
+2.0.0p376	10.324918222
+2.0.0p376	10.364071563
+2.0.0p376	10.44331964
+1.9.3p488	12.568960143
+1.9.3p488	12.625001772
+1.9.3p488	12.651614252
+built-ruby	9.57924413
+built-ruby	9.582905844
+built-ruby	9.645934314
+
+-----------------------------------------------------------
+so_concatenate
+
+#!/usr/bin/ruby
+# -*- mode: ruby -*-
+# $Id: strcat-ruby.code,v 1.4 2004/11/13 07:43:28 bfulgham Exp $
+# http://www.bagley.org/~doug/shootout/
+# based on code from Aristarkh A Zagorodnikov and Dat Nguyen
+
+STUFF = "hello\n"
+i = 0
+while i<10
+  i += 1
+  hello = ''
+  4_000_000.times do |e|
+    hello << STUFF
+  end
+end
+# puts hello.length
+
+
+
+2.1.1p2	6.970786433
+2.1.1p2	6.847819826
+2.1.1p2	6.879669295
+2.0.0p376	6.005488054
+2.0.0p376	5.988622545
+2.0.0p376	6.015560516
+1.9.3p488	6.199086806
+1.9.3p488	6.221498036
+1.9.3p488	6.416786164
+built-ruby	6.963911855
+built-ruby	6.994377037
+built-ruby	6.930142738
+
+-----------------------------------------------------------
+so_count_words
+
+#!/usr/bin/ruby
+# -*- mode: ruby -*-
+# $Id: wc-ruby.code,v 1.4 2004/11/13 07:43:32 bfulgham Exp $
+# http://www.bagley.org/~doug/shootout/
+# with help from Paul Brannan
+
+input = open(File.join(File.dirname($0), 'wc.input'), 'rb')
+
+nl = nw = nc = 0
+while true
+  tmp = input.read(4096) or break
+  data = tmp << (input.gets || "")
+  nc += data.length
+  nl += data.count("\n")
+  ((data.strip! || data).tr!("\n", " ") || data).squeeze!
+  nw += data.count(" ") + 1
+end
+# STDERR.puts "#{nl} #{nw} #{nc}"
+
+
+2.1.1p2	0.382386193
+2.1.1p2	0.368530724
+2.1.1p2	0.36498845
+2.0.0p376	0.356356917
+2.0.0p376	0.352903642
+2.0.0p376	0.35752114
+1.9.3p488	0.356712924
+1.9.3p488	0.361132404
+1.9.3p488	0.335917097
+built-ruby	0.335140411
+built-ruby	0.334096846
+built-ruby	0.330024225
+
+-----------------------------------------------------------
+so_exception
+
+#!/usr/bin/ruby
+# -*- mode: ruby -*-
+# $Id: except-ruby.code,v 1.4 2004/11/13 07:41:33 bfulgham Exp $
+# http://www.bagley.org/~doug/shootout/
+
+$HI = 0
+$LO = 0
+NUM = 250000 # Integer(ARGV[0] || 1)
+
+
+class Lo_Exception < Exception
+  def initialize(num)
+    @value = num
+  end
+end
+
+class Hi_Exception < Exception
+  def initialize(num)
+    @value = num
+  end
+end
+
+def some_function(num)
+  begin
+    hi_function(num)
+  rescue
+    print "We shouldn't get here, exception is: #{$!.type}\n"
+  end
+end
+
+def hi_function(num)
+  begin
+    lo_function(num)
+  rescue Hi_Exception
+    $HI = $HI + 1
+  end
+end
+
+def lo_function(num)
+  begin
+    blowup(num)
+  rescue Lo_Exception
+    $LO = $LO + 1
+  end
+end
+
+def blowup(num)
+  if num % 2 == 0
+    raise Lo_Exception.new(num)
+  else
+    raise Hi_Exception.new(num)
+  end
+end
+
+
+i = 1
+max = NUM+1
+while i < max
+  i += 1
+  some_function(i+1)
+end
+
+2.1.1p2	0.505334614
+2.1.1p2	0.521924017
+2.1.1p2	0.553330497
+2.0.0p376	0.495830984
+2.0.0p376	0.485948881
+2.0.0p376	0.481840396
+1.9.3p488	1.394555091
+1.9.3p488	1.409269882
+1.9.3p488	1.411014445
+built-ruby	0.480290237
+built-ruby	0.496510099
+built-ruby	0.503124211
+
+-----------------------------------------------------------
+so_fannkuch
+
+# The Computer Language Shootout
+# http://shootout.alioth.debian.org/
+# Contributed by Sokolov Yura
+# Modified by Ryan Williams
+
+def fannkuch(n)
+   maxFlips, m, r, check = 0, n-1, n, 0
+   count = (1..n).to_a
+   perm = (1..n).to_a
+
+   while true
+      if check < 30
+         puts "#{perm}"
+         check += 1
+      end
+
+      while r != 1
+         count[r-1] = r
+         r -= 1
+      end
+
+      if perm[0] != 1 and perm[m] != n
+         perml = perm.clone #.dup
+         flips = 0
+         while (k = perml.first ) != 1
+            perml = perml.slice!(0, k).reverse + perml
+            flips += 1
+         end
+         maxFlips = flips if flips > maxFlips
+      end
+      while true
+         if r==n then return maxFlips end
+         perm.insert r,perm.shift
+         break if (count[r] -= 1) > 0
+         r += 1
+      end
+   end
+end
+
+def puts *args
+end
+
+N = 9 # (ARGV[0] || 1).to_i
+puts "Pfannkuchen(#{N}) = #{fannkuch(N)}"
+
+
+2.1.1p2	1.833460763
+2.1.1p2	1.841311448
+2.1.1p2	1.814631804
+2.0.0p376	1.928535634
+2.0.0p376	1.941636453
+2.0.0p376	1.937198103
+1.9.3p488	1.894535171
+1.9.3p488	1.899407468
+1.9.3p488	1.913852262
+built-ruby	1.634599169
+built-ruby	1.620981261
+built-ruby	1.625619227
+
+-----------------------------------------------------------
+so_fasta
+
+# The Computer Language Shootout
+# http://shootout.alioth.debian.org/
+# Contributed by Sokolov Yura
+
+$last = 42.0
+def gen_random (max,im=139968,ia=3877,ic=29573)
+    (max * ($last = ($last * ia + ic) % im)) / im
+end
+
+alu =
+   "GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGG"+
+   "GAGGCCGAGGCGGGCGGATCACCTGAGGTCAGGAGTTCGAGA"+
+   "CCAGCCTGGCCAACATGGTGAAACCCCGTCTCTACTAAAAAT"+
+   "ACAAAAATTAGCCGGGCGTGGTGGCGCGCGCCTGTAATCCCA"+
+   "GCTACTCGGGAGGCTGAGGCAGGAGAATCGCTTGAACCCGGG"+
+   "AGGCGGAGGTTGCAGTGAGCCGAGATCGCGCCACTGCACTCC"+
+   "AGCCTGGGCGACAGAGCGAGACTCCGTCTCAAAAA"
+
+iub = [
+    ["a", 0.27],
+    ["c", 0.12],
+    ["g", 0.12],
+    ["t", 0.27],
+
+    ["B", 0.02],
+    ["D", 0.02],
+    ["H", 0.02],
+    ["K", 0.02],
+    ["M", 0.02],
+    ["N", 0.02],
+    ["R", 0.02],
+    ["S", 0.02],
+    ["V", 0.02],
+    ["W", 0.02],
+    ["Y", 0.02],
+]
+homosapiens = [
+    ["a", 0.3029549426680],
+    ["c", 0.1979883004921],
+    ["g", 0.1975473066391],
+    ["t", 0.3015094502008],
+]
+
+def make_repeat_fasta(id, desc, src, n)
+    puts ">#{id} #{desc}"
+    v = nil
+    width = 60
+    l = src.length
+    s = src * ((n / l) + 1)
+    s.slice!(n, l)
+    puts(s.scan(/.{1,#{width}}/).join("\n"))
+end
+
+def make_random_fasta(id, desc, table, n)
+    puts ">#{id} #{desc}"
+    rand, v = nil,nil
+    width = 60
+    chunk = 1 * width
+    prob = 0.0
+    table.each{|v| v[1]= (prob += v[1])}
+    for i in 1..(n/width)
+        puts((1..width).collect{
+            rand = gen_random(1.0)
+            table.find{|v| v[1]>rand}[0]
+        }.join)
+    end
+    if n%width != 0
+        puts((1..(n%width)).collect{
+            rand = gen_random(1.0)
+            table.find{|v| v[1]>rand}[0]
+        }.join)
+    end
+end
+
+
+n = (ARGV[0] or 250_000).to_i
+
+make_repeat_fasta('ONE', 'Homo sapiens alu', alu, n*2)
+make_random_fasta('TWO', 'IUB ambiguity codes', iub, n*3)
+make_random_fasta('THREE', 'Homo sapiens frequency', homosapiens, n*5)
+
+
+2.1.1p2	3.085696966
+2.1.1p2	3.094524673
+2.1.1p2	3.093821476
+2.0.0p376	3.189902318
+2.0.0p376	3.155448217
+2.0.0p376	3.150605205
+1.9.3p488	3.559003891
+1.9.3p488	3.544424047
+1.9.3p488	3.530938338
+built-ruby	3.054886404
+built-ruby	3.071244692
+built-ruby	3.053020532
+
+-----------------------------------------------------------
+so_k_nucleotide
+
+# The Computer Language Shootout
+# http://shootout.alioth.debian.org
+#
+# contributed by jose fco. gonzalez
+# modified by Sokolov Yura
+
+seq = String.new
+
+def frecuency( seq,length )
+    n, table = seq.length - length + 1, Hash.new(0)
+    f, i = nil, nil
+    (0 ... length).each do |f|
+        (f ... n).step(length) do |i|
+            table[seq[i,length]] += 1
+        end
+    end
+    [n,table]
+
+end
+
+def sort_by_freq( seq,length )
+    n,table = frecuency( seq,length )
+    a, b, v = nil, nil, nil
+    table.sort{|a,b| b[1] <=> a[1]}.each do |v|
+        puts "%s %.3f" % [v[0].upcase,((v[1]*100).to_f/n)]
+    end
+    puts
+end
+
+def find_seq( seq,s )
+    n,table = frecuency( seq,s.length )
+    puts "#{table[s].to_s}\t#{s.upcase}"
+end
+
+input = open(File.join(File.dirname($0), 'fasta.output.100000'), 'rb')
+
+line = input.gets while line !~ /^>THREE/
+line = input.gets
+
+while (line !~ /^>/) & line do
+    seq << line.chomp
+    line = input.gets
+end
+
+[1,2].each {|i| sort_by_freq( seq,i ) }
+
+%w(ggt ggta ggtatt ggtattttaatt ggtattttaatttatagt).each{|s| find_seq( seq,s) }
+
+
+2.1.1p2	2.004287862
+2.1.1p2	2.044404827
+2.1.1p2	2.028956995
+2.0.0p376	2.207149649
+2.0.0p376	2.192891235
+2.0.0p376	2.189942133
+1.9.3p488	2.275697579
+1.9.3p488	2.317133916
+1.9.3p488	2.293104316
+built-ruby	2.026609428
+built-ruby	2.043838635
+built-ruby	2.023890538
+
+-----------------------------------------------------------
+so_lists
+
+#from http://www.bagley.org/~doug/shootout/bench/lists/lists.ruby
+
+NUM = 300
+SIZE = 10000
+
+def test_lists()
+  # create a list of integers (Li1) from 1 to SIZE
+  li1 = (1..SIZE).to_a
+  # copy the list to li2 (not by individual items)
+  li2 = li1.dup
+  # remove each individual item from left side of li2 and
+  # append to right side of li3 (preserving order)
+  li3 = Array.new
+  while (not li2.empty?)
+    li3.push(li2.shift)
+  end
+  # li2 must now be empty
+  # remove each individual item from right side of li3 and
+  # append to right side of li2 (reversing list)
+  while (not li3.empty?)
+    li2.push(li3.pop)
+  end
+  # li3 must now be empty
+  # reverse li1 in place
+  li1.reverse!
+  # check that first item is now SIZE
+  if li1[0] != SIZE then
+    p "not SIZE"
+    0
+  else
+    # compare li1 and li2 for equality
+    if li1 != li2 then
+      return(0)
+    else
+      # return the length of the list
+      li1.length
+    end
+  end
+end
+
+i = 0
+while i<NUM
+  i += 1
+  result = test_lists()
+end
+
+result
+
+2.1.1p2	0.857270803
+2.1.1p2	0.859371044
+2.1.1p2	0.856720827
+2.0.0p376	0.869932713
+2.0.0p376	0.868465855
+2.0.0p376	0.867310138
+1.9.3p488	1.249389205
+1.9.3p488	1.232740257
+1.9.3p488	1.229154985
+built-ruby	0.833462363
+built-ruby	0.832049457
+built-ruby	0.835530279
+
+-----------------------------------------------------------
+so_mandelbrot
+
+#  The Computer Language Benchmarks Game
+#  http://shootout.alioth.debian.org/
+#
+#  contributed by Karl von Laudermann
+#  modified by Jeremy Echols
+
+size = 600 # ARGV[0].to_i
+
+puts "P4\n#{size} #{size}"
+
+ITER = 49                           # Iterations - 1 for easy for..in looping
+LIMIT_SQUARED = 4.0                 # Presquared limit
+
+byte_acc = 0
+bit_num = 0
+
+count_size = size - 1               # Precomputed size for easy for..in looping
+
+# For..in loops are faster than .upto, .downto, .times, etc.
+for y in 0..count_size
+  for x in 0..count_size
+    zr = 0.0
+    zi = 0.0
+    cr = (2.0*x/size)-1.5
+    ci = (2.0*y/size)-1.0
+    escape = false
+
+    # To make use of the for..in code, we use a dummy variable,
+    # like one would in C
+    for dummy in 0..ITER
+      tr = zr*zr - zi*zi + cr
+      ti = 2*zr*zi + ci
+      zr, zi = tr, ti
+
+      if (zr*zr+zi*zi) > LIMIT_SQUARED
+        escape = true
+        break
+      end
+    end
+
+    byte_acc = (byte_acc << 1) | (escape ? 0b0 : 0b1)
+    bit_num += 1
+
+    # Code is very similar for these cases, but using separate blocks
+    # ensures we skip the shifting when it's unnecessary, which is most cases.
+    if (bit_num == 8)
+      print byte_acc.chr
+      byte_acc = 0
+      bit_num = 0
+    elsif (x == count_size)
+      byte_acc <<= (8 - bit_num)
+      print byte_acc.chr
+      byte_acc = 0
+      bit_num = 0
+    end
+  end
+end
+
+2.1.1p2	3.271310653
+2.1.1p2	3.339483243
+2.1.1p2	3.387342105
+2.0.0p376	3.439407909
+2.0.0p376	3.330253401
+2.0.0p376	3.337192013
+1.9.3p488	6.833009801
+1.9.3p488	6.840192687
+1.9.3p488	6.828956305
+built-ruby	3.158032975
+built-ruby	3.14377698
+built-ruby	3.141914052
+
+-----------------------------------------------------------
+so_matrix
+
+#!/usr/bin/ruby
+# -*- mode: ruby -*-
+# $Id: matrix-ruby.code,v 1.4 2004/11/13 07:42:14 bfulgham Exp $
+# http://www.bagley.org/~doug/shootout/
+
+n = 60 #Integer(ARGV.shift || 1)
+
+size = 40
+
+def mkmatrix(rows, cols)
+    count = 1
+    mx = Array.new(rows)
+    (0 .. (rows - 1)).each do |bi|
+        row = Array.new(cols, 0)
+        (0 .. (cols - 1)).each do |j|
+            row[j] = count
+            count += 1
+        end
+        mx[bi] = row
+    end
+    mx
+end
+
+def mmult(rows, cols, m1, m2)
+    m3 = Array.new(rows)
+    (0 .. (rows - 1)).each do |bi|
+        row = Array.new(cols, 0)
+        (0 .. (cols - 1)).each do |j|
+            val = 0
+            (0 .. (cols - 1)).each do |k|
+                val += m1.at(bi).at(k) * m2.at(k).at(j)
+            end
+            row[j] = val
+        end
+        m3[bi] = row
+    end
+    m3
+end
+
+m1 = mkmatrix(size, size)
+m2 = mkmatrix(size, size)
+mm = Array.new
+n.times do
+    mm = mmult(size, size, m1, m2)
+end
+# puts "#{mm[0][0]} #{mm[2][3]} #{mm[3][2]} #{mm[4][4]}"
+
+
+
+2.1.1p2	0.906919637
+2.1.1p2	0.904319023
+2.1.1p2	0.906524433
+2.0.0p376	0.918164142
+2.0.0p376	0.90388361
+2.0.0p376	0.90297848
+1.9.3p488	1.205113743
+1.9.3p488	1.207916326
+1.9.3p488	1.217783708
+built-ruby	0.886869561
+built-ruby	0.897255733
+built-ruby	0.903505774
+
+-----------------------------------------------------------
+so_meteor_contest
+
+#!/usr/bin/env ruby
+#
+# The Computer Language Shootout
+#   http://shootout.alioth.debian.org
+#   contributed by Kevin Barnes (Ruby novice)
+
+# PROGRAM:  the main body is at the bottom.
+#   1) read about the problem here: http://www-128.ibm.com/developerworks/java/library/j-javaopt/
+#   2) see how I represent a board as a bitmask by reading the blank_board comments
+#   3) read as your mental paths take you
+
+def print *args
+end
+
+# class to represent all information about a particular rotation of a particular piece
+class Rotation
+  # an array (by location) containing a bit mask for how the piece maps at the given location.
+  # if the rotation is invalid at that location the mask will contain false
+  attr_reader :start_masks
+
+  # maps a direction to a relative location.  these differ depending on whether it is an even or
+  # odd row being mapped from
+  @@rotation_even_adder = { :west => -1, :east => 1, :nw => -7, :ne => -6, :sw => 5, :se => 6 }
+  @@rotation_odd_adder = { :west => -1, :east => 1, :nw => -6, :ne => -5, :sw => 6, :se => 7 }
+
+  def initialize( directions )
+    @even_offsets, @odd_offsets = normalize_offsets( get_values( directions ))
+
+    @even_mask = mask_for_offsets( @even_offsets)
+    @odd_mask = mask_for_offsets( @odd_offsets)
+
+    @start_masks = Array.new(60)
+
+    # create the rotational masks by placing the base mask at the location and seeing if
+    # 1) it overlaps the boundaries and 2) it produces a prunable board.  if either of these
+    # is true the piece cannot be placed
+    0.upto(59) do | offset |
+      mask = is_even(offset) ? (@even_mask << offset) : (@odd_mask << offset)
+      if (blank_board & mask == 0 && !prunable(blank_board | mask, 0, true)) then
+        imask = compute_required( mask, offset)
+        @start_masks[offset] = [ mask, imask, imask | mask ]
+      else
+        @start_masks[offset] = false
+      end
+    end
+  end
+
+  def compute_required( mask, offset )
+    board = blank_board
+    0.upto(offset) { | i | board |= 1 << i }
+    board |= mask
+    return 0 if (!prunable(board | mask, offset))
+    board = flood_fill(board,58)
+    count = 0
+    imask = 0
+    0.upto(59) do | i |
+      if (board[i] == 0) then
+        imask |= (1 << i)
+        count += 1
+      end
+    end
+    (count > 0 && count < 5) ? imask : 0
+  end
+
+  def flood_fill( board, location)
+    return board if (board[location] == 1)
+    board |= 1 << location
+    row, col = location.divmod(6)
+    board = flood_fill( board, location - 1) if (col > 0)
+    board = flood_fill( board, location + 1) if (col < 4)
+    if (row % 2 == 0) then
+      board = flood_fill( board, location - 7) if (col > 0 && row > 0)
+      board = flood_fill( board, location - 6) if (row > 0)
+      board = flood_fill( board, location + 6) if (row < 9)
+      board = flood_fill( board, location + 5) if (col > 0 && row < 9)
+    else
+      board = flood_fill( board, location - 5) if (col < 4 && row > 0)
+      board = flood_fill( board, location - 6) if (row > 0)
+      board = flood_fill( board, location + 6) if (row < 9)
+      board = flood_fill( board, location + 7) if (col < 4 && row < 9)
+    end
+    board
+  end
+
+  # given a location, produces a list of relative locations covered by the piece at this rotation
+  def offsets( location)
+    if is_even( location) then
+      @even_offsets.collect { | value | value + location }
+    else
+      @odd_offsets.collect { | value | value + location }
+    end
+  end
+
+  # returns a set of offsets relative to the top-left most piece of the rotation (by even or odd rows)
+  # this is hard to explain. imagine we have this partial board:
+  #   0 0 0 0 0 x        [positions 0-5]
+  #    0 0 1 1 0 x       [positions 6-11]
+  #   0 0 1 0 0 x        [positions 12-17]
+  #    0 1 0 0 0 x       [positions 18-23]
+  #   0 1 0 0 0 x        [positions 24-29]
+  #    0 0 0 0 0 x       [positions 30-35]
+  #       ...
+  # The top-left of the piece is at position 8, the
+  # board would be passed as a set of positions (values array) containing [8,9,14,19,25] not necessarily in that
+  # sorted order.  Since that array starts on an odd row, the offsets for an odd row are: [0,1,6,11,17] obtained
+  # by subtracting 8 from everything.  Now imagine the piece shifted up and to the right so it's on an even row:
+  #   0 0 0 1 1 x        [positions 0-5]
+  #    0 0 1 0 0 x       [positions 6-11]
+  #   0 0 1 0 0 x        [positions 12-17]
+  #    0 1 0 0 0 x       [positions 18-23]
+  #   0 0 0 0 0 x        [positions 24-29]
+  #    0 0 0 0 0 x       [positions 30-35]
+  #       ...
+  # Now the positions are [3,4,8,14,19] which after subtracting the lowest value (3) gives [0,1,5,11,16] thus, the
+  # offsets for this particular piece are (in even, odd order) [0,1,5,11,16],[0,1,6,11,17] which is what
+  # this function would return
+  def normalize_offsets( values)
+    min = values.min
+    even_min = is_even(min)
+    other_min = even_min ? min + 6 : min + 7
+    other_values = values.collect do | value |
+      if is_even(value) then
+        value + 6 - other_min
+      else
+        value + 7 - other_min
+      end
+    end
+    values.collect! { | value | value - min }
+
+    if even_min then
+      [values, other_values]
+    else
+      [other_values, values]
+    end
+  end
+
+  # produce a bitmask representation of an array of offset locations
+  def mask_for_offsets( offsets )
+    mask = 0
+    offsets.each { | value | mask = mask + ( 1 << value ) }
+    mask
+  end
+
+  # finds a "safe" position that a position as described by a list of directions can be placed
+  # without falling off any edge of the board.  the values returned a location to place the first piece
+  # at so it will fit after making the described moves
+  def start_adjust( directions )
+    south = east = 0;
+    directions.each do | direction |
+      east += 1 if ( direction == :sw || direction == :nw || direction == :west )
+      south += 1 if ( direction == :nw || direction == :ne )
+    end
+    south * 6 + east
+  end
+
+  # given a set of directions places the piece (as defined by a set of directions) on the board at
+  # a location that will not take it off the edge
+  def get_values ( directions )
+    start = start_adjust(directions)
+    values = [ start ]
+    directions.each do | direction |
+      if (start % 12 >= 6) then
+        start += @@rotation_odd_adder[direction]
+      else
+        start += @@rotation_even_adder[direction]
+      end
+      values += [ start ]
+    end
+
+    # some moves take you back to an existing location, we'll strip duplicates
+    values.uniq
+  end
+end
+
+# describes a piece and caches information about its rotations to as to be efficient for iteration
+# ATTRIBUTES:
+#   rotations -- all the rotations of the piece
+#   type -- a numeic "name" of the piece
+#   masks -- an array by location of all legal rotational masks (a n inner array) for that location
+#   placed -- the mask that this piece was last placed at (not a location, but the actual mask used)
+class Piece
+  attr_reader :rotations, :type, :masks
+  attr_accessor :placed
+
+  # transform hashes that change one direction into another when you either flip or rotate a set of directions
+  @@flip_converter = { :west => :west, :east => :east, :nw => :sw, :ne => :se, :sw => :nw, :se => :ne }
+  @@rotate_converter = { :west => :nw, :east => :se, :nw => :ne, :ne => :east, :sw => :west, :se => :sw }
+
+  def initialize( directions, type )
+    @type = type
+    @rotations = Array.new();
+    @map = {}
+
+    generate_rotations( directions )
+    directions.collect! { | value | @@flip_converter[value] }
+    generate_rotations( directions )
+
+    # creates the masks AND a map that returns [location, rotation] for any given mask
+    # this is used when a board is found and we want to draw it, otherwise the map is unused
+    @masks = Array.new();
+    0.upto(59) do | i |
+      even = true
+      @masks[i] = @rotations.collect do | rotation |
+        mask = rotation.start_masks[i]
+        @map[mask[0]] = [ i, rotation ] if (mask)
+        mask || nil
+      end
+      @masks[i].compact!
+    end
+  end
+
+  # rotates a set of directions through all six angles and adds a Rotation to the list for each one
+  def generate_rotations( directions )
+    6.times do
+      rotations.push( Rotation.new(directions))
+      directions.collect! { | value | @@rotate_converter[value] }
+    end
+  end
+
+  # given a board string, adds this piece to the board at whatever location/rotation
+  # important: the outbound board string is 5 wide, the normal location notation is six wide (padded)
+  def fill_string( board_string)
+    location, rotation = @map[@placed]
+    rotation.offsets(location).each do | offset |
+      row, col = offset.divmod(6)
+      board_string[ row*5 + col, 1 ] = @type.to_s
+    end
+  end
+end
+
+# a blank bit board having this form:
+#
+#    0 0 0 0 0 1
+#     0 0 0 0 0 1
+#    0 0 0 0 0 1
+#     0 0 0 0 0 1
+#    0 0 0 0 0 1
+#     0 0 0 0 0 1
+#    0 0 0 0 0 1
+#     0 0 0 0 0 1
+#    0 0 0 0 0 1
+#     0 0 0 0 0 1
+#    1 1 1 1 1 1
+#
+# where left lest significant bit is the top left and the most significant is the lower right
+# the actual board only consists of the 0 places, the 1 places are blockers to keep things from running
+# off the edges or bottom
+def blank_board
+  0b111111100000100000100000100000100000100000100000100000100000100000
+end
+
+def full_board
+  0b111111111111111111111111111111111111111111111111111111111111111111
+end
+
+# determines if a location (bit position) is in an even row
+def is_even( location)
+  (location % 12) < 6
+end
+
+# support function that create three utility maps:
+#  $converter -- for each row an array that maps a five bit row (via array mapping)
+#                to the a a five bit representation of the bits below it
+#  $bit_count -- maps a five bit row (via array mapping) to the number of 1s in the row
+#  @@new_regions -- maps a five bit row (via array mapping) to an array of "region" arrays
+#                   a region array has three values the first is a mask of bits in the region,
+#                   the second is the count of those bits and the third is identical to the first
+#                   examples:
+#                           0b10010 => [ 0b01100, 2, 0b01100 ], [ 0b00001, 1, 0b00001]
+#                           0b01010 => [ 0b10000, 1, 0b10000 ], [ 0b00100, 1, 0b00100 ], [ 0b00001, 1, 0b00001]
+#                           0b10001 => [ 0b01110, 3, 0b01110 ]
+def create_collector_support
+  odd_map = [0b11, 0b110, 0b1100, 0b11000, 0b10000]
+  even_map = [0b1, 0b11, 0b110, 0b1100, 0b11000]
+
+  all_odds = Array.new(0b100000)
+  all_evens = Array.new(0b100000)
+  bit_counts = Array.new(0b100000)
+  new_regions = Array.new(0b100000)
+  0.upto(0b11111) do | i |
+    bit_count = odd = even = 0
+    0.upto(4) do | bit |
+      if (i[bit] == 1) then
+        bit_count += 1
+        odd |= odd_map[bit]
+        even |= even_map[bit]
+      end
+    end
+    all_odds[i] = odd
+    all_evens[i] = even
+    bit_counts[i] = bit_count
+    new_regions[i] = create_regions( i)
+  end
+
+  $converter = []
+  10.times { | row | $converter.push((row % 2 == 0) ? all_evens : all_odds) }
+  $bit_counts = bit_counts
+  $regions = new_regions.collect { | set | set.collect { | value | [ value, bit_counts[value], value] } }
+end
+
+# determines if a board is punable, meaning that there is no possibility that it
+# can be filled up with pieces.  A board is prunable if there is a grouping of unfilled spaces
+# that are not a multiple of five.  The following board is an example of a prunable board:
+#    0 0 1 0 0
+#     0 1 0 0 0
+#    1 1 0 0 0
+#     0 1 0 0 0
+#    0 0 0 0 0
+#       ...
+#
+# This board is prunable because the top left corner is only 3 bits in area, no piece will ever fit it
+# parameters:
+#   board -- an initial bit board (6 bit padded rows, see blank_board for format)
+#   location -- starting location, everything above and to the left is already full
+#   slotting -- set to true only when testing initial pieces, when filling normally
+#               additional assumptions are possible
+#
+# Algorithm:
+#    The algorithm starts at the top row (as determined by location) and iterates a row at a time
+#    maintainng counts of active open areas (kept in the collector array) each collector contains
+#    three values at the start of an iteration:
+#          0: mask of bits that would be adjacent to the collector in this row
+#          1: the number of bits collected so far
+#          2: a scratch space starting as zero, but used during the computation to represent
+#             the empty bits in the new row that are adjacent (position 0)
+#  The exact procedure is described in-code
+def prunable( board, location, slotting = false)
+  collectors = []
+  # loop across the rows
+  (location / 6).to_i.upto(9) do | row_on |
+    # obtain a set of regions representing the bits of the current row.
+    regions = $regions[(board >> (row_on * 6)) & 0b11111]
+    converter = $converter[row_on]
+
+    # track the number of collectors at the start of the cycle so that
+    # we don't compute against newly created collectors, only existing collectors
+    initial_collector_count = collectors.length
+
+    # loop against the regions.  For each region of the row
+    # we will see if it connects to one or more existing collectors.
+    # if it connects to 1 collector, the bits from the region are added to the
+    # bits of the collector and the mask is placed in collector[2]
+    # If the region overlaps more than one collector then all the collectors
+    # it overlaps with are merged into the first one (the others are set to nil in the array)
+    # if NO collectors are found then the region is copied as a new collector
+    regions.each do | region |
+      collector_found = nil
+      region_mask = region[2]
+      initial_collector_count.times do | collector_num |
+        collector = collectors[collector_num]
+        if (collector) then
+          collector_mask = collector[0]
+          if (collector_mask & region_mask != 0) then
+            if (collector_found) then
+              collector_found[0] |= collector_mask
+              collector_found[1] += collector[1]
+              collector_found[2] |= collector[2]
+              collectors[collector_num] = nil
+            else
+              collector_found = collector
+              collector[1] += region[1]
+              collector[2] |= region_mask
+            end
+          end
+        end
+      end
+      if (collector_found == nil) then
+        collectors.push(Array.new(region))
+      end
+    end
+
+    # check the existing collectors, if any collector overlapped no bits in the region its [2] value will
+    # be zero.  The size of any such reaason is tested if it is not a multiple of five true is returned since
+    # the board is prunable.  if it is a multiple of five it is removed.
+    # Collector that are still active have a new adjacent value [0] set based n the matched bits
+    # and have [2] cleared out for the next cycle.
+    collectors.length.times do | collector_num |
+      collector = collectors[collector_num]
+      if (collector) then
+        if (collector[2] == 0) then
+          return true if (collector[1] % 5 != 0)
+          collectors[collector_num] = nil
+        else
+          # if a collector matches all bits in the row then we can return unprunable early for the
+          # following reasons:
+          #    1) there can be no more unavailable bits bince we fill from the top left downward
+          #    2) all previous regions have been closed or joined so only this region can fail
+          #    3) this region must be good since there can never be only 1 region that is nuot
+          #       a multiple of five
+          # this rule only applies when filling normally, so we ignore the rule if we are "slotting"
+          # in pieces to see what configurations work for them (the only other time this algorithm is used).
+          return false if (collector[2] == 0b11111 && !slotting)
+          collector[0] = converter[collector[2]]
+          collector[2] = 0
+        end
+      end
+    end
+
+    # get rid of all the empty converters for the next round
+    collectors.compact!
+  end
+  return false if (collectors.length <= 1) # 1 collector or less and the region is fine
+  collectors.any? { | collector | (collector[1] % 5) != 0 } # more than 1 and we test them all for bad size
+end
+
+# creates a region given a row mask.  see prunable for what a "region" is
+def create_regions( value )
+  regions = []
+  cur_region = 0
+  5.times do | bit |
+    if (value[bit] == 0) then
+      cur_region |= 1 << bit
+    else
+      if (cur_region != 0 ) then
+        regions.push( cur_region)
+        cur_region = 0;
+      end
+    end
+  end
+  regions.push(cur_region) if (cur_region != 0)
+  regions
+end
+
+# find up to the counted number of solutions (or all solutions) and prints the final result
+def find_all
+  find_top( 1)
+  find_top( 0)
+  print_results
+end
+
+# show the board
+def print_results
+  print "#{@boards_found} solutions found\n\n"
+  print_full_board( @min_board)
+  print "\n"
+  print_full_board( @max_board)
+  print "\n"
+end
+
+# finds solutions.  This special version of the main function is only used for the top level
+# the reason for it is basically to force a particular ordering on how the rotations are tested for
+# the first piece.  It is called twice, first looking for placements of the odd rotations and then
+# looking for placements of the even locations.
+#
+# WHY?
+#   Since any found solution has an inverse we want to maximize finding solutions that are not already found
+#   as an inverse.  The inverse will ALWAYS be 3 one of the piece configurations that is exactly 3 rotations away
+#   (an odd number).  Checking even vs odd then produces a higher probability of finding more pieces earlier
+#   in the cycle.  We still need to keep checking all the permutations, but our probability of finding one will
+#   diminsh over time.  Since we are TOLD how many to search for this lets us exit before checking all pieces
+#   this bennifit is very great when seeking small numbers of solutions and is 0 when looking for more than the
+#   maximum number
+def find_top( rotation_skip)
+  board = blank_board
+  (@pieces.length-1).times do
+    piece = @pieces.shift
+    piece.masks[0].each do | mask, imask, cmask |
+      if ((rotation_skip += 1) % 2 == 0) then
+        piece.placed = mask
+        find( 1, 1, board | mask)
+      end
+    end
+    @pieces.push(piece)
+  end
+  piece = @pieces.shift
+  @pieces.push(piece)
+end
+
+# the normail find routine, iterates through the available pieces, checks all rotations at the current location
+# and adds any boards found.  depth is acheived via recursion.  the overall approach is described
+# here: http://www-128.ibm.com/developerworks/java/library/j-javaopt/
+# parameters:
+#  start_location -- where to start looking for place for the next piece at
+#  placed -- number of pieces placed
+#  board -- current state of the board
+#
+# see in-code comments
+def find( start_location, placed, board)
+  # find the next location to place a piece by looking for an empty bit
+  while board[start_location] == 1
+    start_location += 1
+  end
+
+  @pieces.length.times do
+    piece = @pieces.shift
+    piece.masks[start_location].each do | mask, imask, cmask |
+      if ( board & cmask == imask) then
+        piece.placed = mask
+        if (placed == 9) then
+          add_board
+        else
+          find( start_location + 1, placed + 1, board | mask)
+        end
+      end
+    end
+    @pieces.push(piece)
+  end
+end
+
+# print the board
+def print_full_board( board_string)
+  10.times do | row |
+    print " " if (row % 2 == 1)
+    5.times do | col |
+      print "#{board_string[row*5 + col,1]} "
+    end
+    print "\n"
+  end
+end
+
+# when a board is found we "draw it" into a string and then flip that string, adding both to
+# the list (hash) of solutions if they are unique.
+def add_board
+  board_string = "99999999999999999999999999999999999999999999999999"
+  @all_pieces.each {  | piece | piece.fill_string( board_string ) }
+  save( board_string)
+  save( board_string.reverse)
+end
+
+# adds a board string to the list (if new) and updates the current best/worst board
+def save( board_string)
+  if (@all_boards[board_string] == nil) then
+    @min_board = board_string if (board_string < @min_board)
+    @max_board = board_string if (board_string > @max_board)
+    @all_boards.store(board_string,true)
+    @boards_found += 1
+
+    # the exit motif is a time saver.  Ideally the function should return, but those tests
+    # take noticeable time (performance).
+    if (@boards_found == @stop_count) then
+      print_results
+      exit(0)
+    end
+  end
+end
+
+
+##
+## MAIN BODY :)
+##
+create_collector_support
+@pieces = [
+  Piece.new( [ :nw, :ne, :east, :east ], 2),
+  Piece.new( [ :ne, :se, :east, :ne ], 7),
+  Piece.new( [ :ne, :east, :ne, :nw ], 1),
+  Piece.new( [ :east, :sw, :sw, :se ], 6),
+  Piece.new( [ :east, :ne, :se, :ne ], 5),
+  Piece.new( [ :east, :east, :east, :se ], 0),
+  Piece.new( [ :ne, :nw, :se, :east, :se ], 4),
+  Piece.new( [ :se, :se, :se, :west ], 9),
+  Piece.new( [ :se, :se, :east, :se ], 8),
+  Piece.new( [ :east, :east, :sw, :se ], 3)
+  ];
+
+@all_pieces = Array.new( @pieces)
+
+@min_board = "99999999999999999999999999999999999999999999999999"
+@max_board = "00000000000000000000000000000000000000000000000000"
+@stop_count = ARGV[0].to_i || 2089
+@all_boards = {}
+@boards_found = 0
+
+find_all ######## DO IT!!!
+
+
+2.1.1p2	4.770310982
+2.1.1p2	4.745272455
+2.1.1p2	4.780671251
+2.0.0p376	5.605007505
+2.0.0p376	5.584323188
+2.0.0p376	5.627001051
+1.9.3p488	6.600736712
+1.9.3p488	6.650094606
+1.9.3p488	6.613961897
+built-ruby	4.619776702
+built-ruby	4.628333307
+built-ruby	4.597981067
+
+-----------------------------------------------------------
+so_nbody
+
+# The Computer Language Shootout
+# http://shootout.alioth.debian.org
+#
+# Optimized for Ruby by Jesse Millikan
+# From version ported by Michael Neumann from the C gcc version,
+# which was written by Christoph Bauer.
+
+SOLAR_MASS = 4 * Math::PI**2
+DAYS_PER_YEAR = 365.24
+
+def _puts *args
+end
+
+class Planet
+ attr_accessor :x, :y, :z, :vx, :vy, :vz, :mass
+
+ def initialize(x, y, z, vx, vy, vz, mass)
+  @x, @y, @z = x, y, z
+  @vx, @vy, @vz = vx * DAYS_PER_YEAR, vy * DAYS_PER_YEAR, vz * DAYS_PER_YEAR
+  @mass = mass * SOLAR_MASS
+ end
+
+ def move_from_i(bodies, nbodies, dt, i)
+  while i < nbodies
+   b2 = bodies[i]
+   dx = @x - b2.x
+   dy = @y - b2.y
+   dz = @z - b2.z
+
+   distance = Math.sqrt(dx * dx + dy * dy + dz * dz)
+   mag = dt / (distance * distance * distance)
+   b_mass_mag, b2_mass_mag = @mass * mag, b2.mass * mag
+
+   @vx -= dx * b2_mass_mag
+   @vy -= dy * b2_mass_mag
+   @vz -= dz * b2_mass_mag
+   b2.vx += dx * b_mass_mag
+   b2.vy += dy * b_mass_mag
+   b2.vz += dz * b_mass_mag
+   i += 1
+  end
+
+  @x += dt * @vx
+  @y += dt * @vy
+  @z += dt * @vz
+ end
+end
+
+def energy(bodies)
+  e = 0.0
+  nbodies = bodies.size
+
+  for i in 0 ... nbodies
+    b = bodies[i]
+    e += 0.5 * b.mass * (b.vx * b.vx + b.vy * b.vy + b.vz * b.vz)
+    for j in (i + 1) ... nbodies
+      b2 = bodies[j]
+      dx = b.x - b2.x
+      dy = b.y - b2.y
+      dz = b.z - b2.z
+      distance = Math.sqrt(dx * dx + dy * dy + dz * dz)
+      e -= (b.mass * b2.mass) / distance
+    end
+  end
+  e
+end
+
+def offset_momentum(bodies)
+  px, py, pz = 0.0, 0.0, 0.0
+
+  for b in bodies
+    m = b.mass
+    px += b.vx * m
+    py += b.vy * m
+    pz += b.vz * m
+  end
+
+  b = bodies[0]
+  b.vx = - px / SOLAR_MASS
+  b.vy = - py / SOLAR_MASS
+  b.vz = - pz / SOLAR_MASS
+end
+
+BODIES = [
+  # sun
+  Planet.new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0),
+
+  # jupiter
+  Planet.new(
+    4.84143144246472090e+00,
+    -1.16032004402742839e+00,
+    -1.03622044471123109e-01,
+    1.66007664274403694e-03,
+    7.69901118419740425e-03,
+    -6.90460016972063023e-05,
+    9.54791938424326609e-04),
+
+  # saturn
+  Planet.new(
+    8.34336671824457987e+00,
+    4.12479856412430479e+00,
+    -4.03523417114321381e-01,
+    -2.76742510726862411e-03,
+    4.99852801234917238e-03,
+    2.30417297573763929e-05,
+    2.85885980666130812e-04),
+
+  # uranus
+  Planet.new(
+    1.28943695621391310e+01,
+    -1.51111514016986312e+01,
+    -2.23307578892655734e-01,
+    2.96460137564761618e-03,
+    2.37847173959480950e-03,
+    -2.96589568540237556e-05,
+    4.36624404335156298e-05),
+
+  # neptune
+  Planet.new(
+    1.53796971148509165e+01,
+    -2.59193146099879641e+01,
+    1.79258772950371181e-01,
+    2.68067772490389322e-03,
+    1.62824170038242295e-03,
+    -9.51592254519715870e-05,
+    5.15138902046611451e-05)
+]
+
+init = 200_000 # ARGV[0]
+n = Integer(init)
+
+offset_momentum(BODIES)
+
+puts "%.9f" % energy(BODIES)
+
+nbodies = BODIES.size
+dt = 0.01
+
+n.times do
+  i = 0
+  while i < nbodies
+    b = BODIES[i]
+    b.move_from_i(BODIES, nbodies, dt, i + 1)
+    i += 1
+  end
+end
+
+puts "%.9f" % energy(BODIES)
+
+2.1.1p2	2.091030954
+2.1.1p2	2.091210722
+2.1.1p2	2.092373837
+2.0.0p376	2.171997234
+2.0.0p376	2.175465721
+2.0.0p376	2.183483357
+1.9.3p488	5.088426476
+1.9.3p488	5.187042806
+1.9.3p488	5.103024336
+built-ruby	2.0825676
+built-ruby	2.095327411
+built-ruby	2.107528292
+
+-----------------------------------------------------------
+so_nested_loop
+
+#!/usr/bin/ruby
+# -*- mode: ruby -*-
+# $Id: nestedloop-ruby.code,v 1.4 2004/11/13 07:42:22 bfulgham Exp $
+# http://www.bagley.org/~doug/shootout/
+# from Avi Bryant
+
+n = 16 # Integer(ARGV.shift || 1)
+x = 0
+n.times do
+    n.times do
+        n.times do
+            n.times do
+                n.times do
+                    n.times do
+                        x += 1
+                    end
+                end
+            end
+        end
+    end
+end
+# puts x
+
+
+
+2.1.1p2	1.715334458
+2.1.1p2	1.686681247
+2.1.1p2	1.680064289
+2.0.0p376	1.705856035
+2.0.0p376	1.764603048
+2.0.0p376	1.688882613
+1.9.3p488	1.810074577
+1.9.3p488	1.852538485
+1.9.3p488	1.769946278
+built-ruby	1.66788693
+built-ruby	1.660925145
+built-ruby	1.659067103
+
+-----------------------------------------------------------
+so_nsieve
+
+# The Computer Language Shootout
+# http://shootout.alioth.debian.org/
+#
+# contributed by Glenn Parker, March 2005
+# modified by Evan Phoenix, Sept 2006
+
+def sieve(m)
+  flags = Flags.dup[0,m]
+  count = 0
+  pmax = m - 1
+  p = 2
+  while p <= pmax
+    unless flags[p].zero?
+      count += 1
+      mult = p
+      while mult <= pmax
+        flags[mult] = 0
+        mult += p
+      end
+    end
+    p += 1
+  end
+  count
+end
+
+n = 9 # (ARGV[0] || 2).to_i
+Flags = ("\x1" * ( 2 ** n * 10_000)).unpack("c*")
+
+n.downto(n-2) do |exponent|
+  break if exponent < 0
+  m = (1 << exponent) * 10_000
+  # m = (2 ** exponent) * 10_000
+  count = sieve(m)
+  printf "Primes up to %8d %8d\n", m, count
+end
+
+2.1.1p2	3.04269232
+2.1.1p2	3.044027913
+2.1.1p2	3.036688361
+2.0.0p376	3.38628245
+2.0.0p376	3.416787905
+2.0.0p376	3.400031099
+1.9.3p488	4.08441091
+1.9.3p488	4.104029505
+1.9.3p488	4.122200238
+built-ruby	2.994513488
+built-ruby	2.999180337
+built-ruby	3.041588253
+
+-----------------------------------------------------------
+so_nsieve_bits
+
+#!/usr/bin/ruby
+#coding: us-ascii
+#
+# The Great Computer Language Shootout
+# http://shootout.alioth.debian.org/
+#
+# nsieve-bits in Ruby
+# Contributed by Glenn Parker, March 2005
+
+CharExponent = 3
+BitsPerChar = 1 << CharExponent
+LowMask = BitsPerChar - 1
+
+def sieve(m)
+  items = "\xFF" * ((m / BitsPerChar) + 1)
+  masks = ""
+  BitsPerChar.times do |b|
+    masks << (1 << b).chr
+  end
+
+  count = 0
+  pmax = m - 1
+  2.step(pmax, 1) do |p|
+    if items[p >> CharExponent][p & LowMask] == 1
+      count += 1
+      p.step(pmax, p) do |mult|
+	a = mult >> CharExponent
+	b = mult & LowMask
+	items[a] -= masks[b] if items[a][b] != 0
+      end
+    end
+  end
+  count
+end
+
+n = 9 # (ARGV[0] || 2).to_i
+n.step(n - 2, -1) do |exponent|
+  break if exponent < 0
+  m = 2 ** exponent * 10_000
+  count = sieve(m)
+  printf "Primes up to %8d %8d\n", m, count
+end
+
+
+2.1.1p2	3.624855503
+2.1.1p2	3.578858084
+2.1.1p2	3.595125311
+2.0.0p376	3.607369935
+2.0.0p376	3.607519548
+2.0.0p376	3.597644856
+1.9.3p488	4.050135741
+1.9.3p488	4.02780969
+1.9.3p488	4.010840007
+built-ruby	3.618142968
+built-ruby	3.626912305
+built-ruby	3.599531216
+
+-----------------------------------------------------------
+so_object
+
+#!/usr/bin/ruby
+# -*- mode: ruby -*-
+# $Id: objinst-ruby.code,v 1.4 2004/11/13 07:42:25 bfulgham Exp $
+# http://www.bagley.org/~doug/shootout/
+# with help from Aristarkh Zagorodnikov
+
+class Toggle
+    def initialize(start_state)
+        @bool = start_state
+    end
+
+    def value
+        @bool
+    end
+
+    def activate
+        @bool = !@bool
+        self
+    end
+end
+
+class NthToggle < Toggle
+    def initialize(start_state, max_counter)
+        super start_state
+        @count_max = max_counter
+        @counter = 0
+    end
+
+    def activate
+        @counter += 1
+        if @counter >= @count_max
+            @bool = !@bool
+            @counter = 0
+        end
+        self
+    end
+end
+
+n = 1500000 # (ARGV.shift || 1).to_i
+
+toggle = Toggle.new 1
+5.times do
+    toggle.activate.value ? 'true' : 'false'
+end
+n.times do
+    toggle = Toggle.new 1
+end
+
+ntoggle = NthToggle.new 1, 3
+8.times do
+    ntoggle.activate.value ? 'true' : 'false'
+end
+n.times do
+    ntoggle = NthToggle.new 1, 3
+end
+
+
+2.1.1p2	1.103423471
+2.1.1p2	1.098709061
+2.1.1p2	1.108412007
+2.0.0p376	1.238803957
+2.0.0p376	1.227028327
+2.0.0p376	1.232245701
+1.9.3p488	1.305591299
+1.9.3p488	1.318063944
+1.9.3p488	1.311947733
+built-ruby	1.059601991
+built-ruby	1.056370562
+built-ruby	1.052314458
+
+-----------------------------------------------------------
+so_partial_sums
+
+n = 2_500_000 # (ARGV.shift || 1).to_i
+
+alt = 1.0 ; s0 = s1 = s2 = s3 = s4 = s5 = s6 = s7 = s8 = 0.0
+
+1.upto(n) do |d|
+  d = d.to_f ; d2 = d * d ; d3 = d2 * d ; ds = Math.sin(d) ; dc = Math.cos(d)
+
+  s0 += (2.0 / 3.0) ** (d - 1.0)
+  s1 += 1.0 / Math.sqrt(d)
+  s2 += 1.0 / (d * (d + 1.0))
+  s3 += 1.0 / (d3 * ds * ds)
+  s4 += 1.0 / (d3 * dc * dc)
+  s5 += 1.0 / d
+  s6 += 1.0 / d2
+  s7 += alt / d
+  s8 += alt / (2.0 * d - 1.0)
+
+  alt = -alt
+end
+
+if false
+  printf("%.9f\t(2/3)^k\n", s0)
+  printf("%.9f\tk^-0.5\n", s1)
+  printf("%.9f\t1/k(k+1)\n", s2)
+  printf("%.9f\tFlint Hills\n", s3)
+  printf("%.9f\tCookson Hills\n", s4)
+  printf("%.9f\tHarmonic\n", s5)
+  printf("%.9f\tRiemann Zeta\n", s6)
+  printf("%.9f\tAlternating Harmonic\n", s7)
+  printf("%.9f\tGregory\n", s8)
+end
+
+2.1.1p2	3.011677756
+2.1.1p2	3.01735358
+2.1.1p2	2.934040871
+2.0.0p376	2.963509461
+2.0.0p376	2.971973135
+2.0.0p376	2.95399581
+1.9.3p488	6.473274853
+1.9.3p488	6.597399908
+1.9.3p488	6.501695492
+built-ruby	2.932738265
+built-ruby	2.923193594
+built-ruby	2.936428246
+
+-----------------------------------------------------------
+so_pidigits
+
+# The Great Computer Language Shootout
+# http://shootout.alioth.debian.org/
+#
+# contributed by Gabriele Renzi
+
+class PiDigitSpigot
+
+    def initialize()
+        @z = Transformation.new 1,0,0,1
+        @x = Transformation.new 0,0,0,0
+        @inverse = Transformation.new 0,0,0,0
+    end
+
+    def next!
+        @y = @z.extract(3)
+        if safe? @y
+            @z = produce(@y)
+            @y
+        else
+            @z = consume @x.next!()
+            next!()
+        end
+    end
+
+    def safe?(digit)
+        digit == @z.extract(4)
+    end
+
+    def produce(i)
+        @inverse.qrst(10,-10*i,0,1).compose(@z)
+    end
+
+    def consume(a)
+        @z.compose(a)
+    end
+end
+
+
+class Transformation
+    attr_reader :q, :r, :s, :t
+    def initialize (q, r, s, t)
+        @q,@r,@s,@t,@k = q,r,s,t,0
+    end
+
+    def next!()
+        @q = @k = @k + 1
+        @r = 4 * @k + 2
+        @s = 0
+        @t = 2 * @k + 1
+        self
+    end
+
+    def extract(j)
+        (@q * j + @r) / (@s * j + @t)
+    end
+
+    def compose(a)
+        self.class.new( @q * a.q,
+                        @q * a.r + r * a.t,
+                        @s * a.q + t * a.s,
+                        @s * a.r + t * a.t
+                    )
+    end
+
+    def qrst *args
+        initialize *args
+        self
+    end
+
+
+end
+
+
+WIDTH = 10
+n = 2_500 # Integer(ARGV[0])
+j = 0
+
+digits = PiDigitSpigot.new
+
+while n > 0
+    if n >= WIDTH
+        WIDTH.times {print digits.next!}
+        j += WIDTH
+    else
+        n.times {print digits.next!}
+        (WIDTH-n).times {print " "}
+        j += n
+    end
+    puts "\t:"+j.to_s
+    n -= WIDTH
+end
+
+
+2.1.1p2	0.87576848
+2.1.1p2	0.869384997
+2.1.1p2	0.867920842
+2.0.0p376	1.109259499
+2.0.0p376	1.097524146
+2.0.0p376	1.094073345
+1.9.3p488	0.962845983
+1.9.3p488	0.954757864
+1.9.3p488	0.970665742
+built-ruby	0.797462204
+built-ruby	0.795121473
+built-ruby	0.801733404
+
+-----------------------------------------------------------
+so_random
+
+# from http://www.bagley.org/~doug/shootout/bench/random/random.ruby
+
+IM = 139968.0
+IA = 3877.0
+IC = 29573.0
+
+$last = 42.0
+
+def gen_random(max)
+  (max * ($last = ($last * IA + IC) % IM)) / IM
+end
+
+N = 3_000_000
+
+i = 0
+while i<N
+  i +=1
+  gen_random(100.0)
+end
+# "%.9f" % gen_random(100.0)
+
+2.1.1p2	0.829499249
+2.1.1p2	0.827471046
+2.1.1p2	0.831982024
+2.0.0p376	0.837663532
+2.0.0p376	0.860501716
+2.0.0p376	0.841178092
+1.9.3p488	1.438466085
+1.9.3p488	1.448070816
+1.9.3p488	1.477834075
+built-ruby	0.817223884
+built-ruby	0.810713648
+built-ruby	0.820555525
+
+-----------------------------------------------------------
+so_reverse_complement
+
+#!/usr/bin/ruby
+# The Great Computer Language Shootout
+# http://shootout.alioth.debian.org/
+#
+# Contributed by Peter Bjarke Olsen
+# Modified by Doug King
+
+seq=Array.new
+
+def revcomp(seq)
+  seq.reverse!.tr!('wsatugcyrkmbdhvnATUGCYRKMBDHVN','WSTAACGRYMKVHDBNTAACGRYMKVHDBN')
+  stringlen=seq.length
+  0.step(stringlen-1,60) {|x| print seq.slice(x,60) , "\n"}
+end
+
+input = open(File.join(File.dirname($0), 'fasta.output.2500000'), 'rb')
+
+while input.gets
+  if $_ =~ />/
+    if seq.length != 0
+      revcomp(seq.join)
+      seq=Array.new
+    end
+    puts $_
+  else
+    $_.sub(/\n/,'')
+    seq.push $_
+  end
+end
+revcomp(seq.join)
+
+2.1.1p2	2.692086144
+2.1.1p2	2.701691335
+2.1.1p2	2.674634696
+2.0.0p376	2.845654165
+2.0.0p376	2.863059458
+2.0.0p376	2.851263059
+1.9.3p488	2.670798632
+1.9.3p488	2.682685781
+1.9.3p488	2.667581446
+built-ruby	2.775012026
+built-ruby	2.694821692
+built-ruby	2.701383085
+
+-----------------------------------------------------------
+so_sieve
+
+# from http://www.bagley.org/~doug/shootout/bench/sieve/sieve.ruby
+num = 500
+count = i = j = 0
+flags0 = Array.new(8192,1)
+k = 0
+while k < num
+  k += 1
+  count = 0
+  flags = flags0.dup
+  i = 2
+  while i<8192
+    i += 1
+    if flags[i]
+      # remove all multiples of prime: i
+      j = i*i
+      while j < 8192
+        j += i
+        flags[j] = nil
+      end
+      count += 1
+    end
+  end
+end
+count
+
+2.1.1p2	0.995102021
+2.1.1p2	0.987394256
+2.1.1p2	1.005183027
+2.0.0p376	1.1645622
+2.0.0p376	1.180338073
+2.0.0p376	1.157866778
+1.9.3p488	1.389039904
+1.9.3p488	1.370786
+1.9.3p488	1.363485176
+built-ruby	0.973614288
+built-ruby	0.971597971
+built-ruby	0.974311993
+
+-----------------------------------------------------------
+so_spectralnorm
+
+# The Computer Language Shootout
+# http://shootout.alioth.debian.org/
+# Contributed by Sokolov Yura
+
+def eval_A(i,j)
+	return 1.0/((i+j)*(i+j+1)/2+i+1)
+end
+
+def eval_A_times_u(u)
+        v, i = nil, nil
+	(0..u.length-1).collect { |i|
+                v = 0
+		for j in 0..u.length-1
+			v += eval_A(i,j)*u[j]
+                end
+                v
+        }
+end
+
+def eval_At_times_u(u)
+	v, i = nil, nil
+	(0..u.length-1).collect{|i|
+                v = 0
+		for j in 0..u.length-1
+			v += eval_A(j,i)*u[j]
+                end
+                v
+        }
+end
+
+def eval_AtA_times_u(u)
+	return eval_At_times_u(eval_A_times_u(u))
+end
+
+n = 500 # ARGV[0].to_i
+
+u=[1]*n
+for i in 1..10
+        v=eval_AtA_times_u(u)
+        u=eval_AtA_times_u(v)
+end
+vBv=0
+vv=0
+for i in 0..n-1
+        vBv += u[i]*v[i]
+        vv += v[i]*v[i]
+end
+
+str = "%0.9f" % (Math.sqrt(vBv/vv)), "\n"
+# print str
+
+2.1.1p2	2.984471123
+2.1.1p2	2.995295767
+2.1.1p2	2.991335802
+2.0.0p376	3.12271612
+2.0.0p376	3.076011023
+2.0.0p376	3.076855897
+1.9.3p488	4.926687647
+1.9.3p488	4.905470438
+1.9.3p488	4.885464763
+built-ruby	2.971920434
+built-ruby	2.999398989
+built-ruby	2.946407043
+
+-----------------------------------------------------------
+vm1_attr_ivar
+
+class C
+  attr_reader :a, :b
+  def initialize
+    @a = nil
+    @b = nil
+  end
+end
+obj = C.new
+i = 0
+while i<30_000_000 # while loop 1
+  i += 1
+  j = obj.a
+  k = obj.b
+end
+
+2.1.1p2	2.241341118
+2.1.1p2	2.244738669
+2.1.1p2	2.247592127
+2.0.0p376	2.314897026
+2.0.0p376	2.311119669
+2.0.0p376	2.308819136
+1.9.3p488	3.693649227
+1.9.3p488	3.692950294
+1.9.3p488	3.887223422
+built-ruby	2.228231352
+built-ruby	2.2289763
+built-ruby	2.224660623
+
+-----------------------------------------------------------
+vm1_attr_ivar_set
+
+class C
+  attr_accessor :a, :b
+  def initialize
+    @a = nil
+    @b = nil
+  end
+end
+obj = C.new
+i = 0
+while i<30_000_000 # while loop 1
+  i += 1
+  obj.a = 1
+  obj.b = 2
+end
+
+2.1.1p2	2.488253724
+2.1.1p2	2.447663833
+2.1.1p2	2.484607758
+2.0.0p376	2.71668595
+2.0.0p376	2.707910566
+2.0.0p376	2.692317086
+1.9.3p488	4.223192109
+1.9.3p488	4.216359951
+1.9.3p488	4.217666553
+built-ruby	2.529094661
+built-ruby	2.495956307
+built-ruby	2.593575817
+
+-----------------------------------------------------------
+vm1_block
+
+def m
+  yield
+end
+
+i = 0
+while i<30_000_000 # while loop 1
+  i += 1
+  m{
+  }
+end
+
+2.1.1p2	3.223400764
+2.1.1p2	3.266342216
+2.1.1p2	3.203154836
+2.0.0p376	3.268708754
+2.0.0p376	3.331810211
+2.0.0p376	3.294607551
+1.9.3p488	3.603289299
+1.9.3p488	3.573361575
+1.9.3p488	3.571815635
+built-ruby	3.22914119
+built-ruby	3.230898275
+built-ruby	3.2393909
+
+-----------------------------------------------------------
+vm1_const
+
+Const = 1
+
+i = 0
+while i<30_000_000 # while loop 1
+  i += 1
+  j = Const
+  k = Const
+end
+
+2.1.1p2	1.420028973
+2.1.1p2	1.418425279
+2.1.1p2	1.4202197
+2.0.0p376	1.470339396
+2.0.0p376	1.471243795
+2.0.0p376	1.469064027
+1.9.3p488	1.474687626
+1.9.3p488	1.469332119
+1.9.3p488	1.468054534
+built-ruby	1.407021689
+built-ruby	1.403990388
+built-ruby	1.402875794
+
+-----------------------------------------------------------
+vm1_ensure
+
+i = 0
+while i<30_000_000 # benchmark loop 1
+  i += 1
+  begin
+    begin
+    ensure
+    end
+  ensure
+  end
+end
+
+
+2.1.1p2	1.049844543
+2.1.1p2	1.052332957
+2.1.1p2	1.065671822
+2.0.0p376	1.063962383
+2.0.0p376	1.068100699
+2.0.0p376	1.06429461
+1.9.3p488	1.076281411
+1.9.3p488	1.06368162
+1.9.3p488	1.064534271
+built-ruby	1.040484818
+built-ruby	1.03194964
+built-ruby	1.059388074
+
+-----------------------------------------------------------
+vm1_float_simple
+
+i = 0.0; f = 0.0
+while i<30_000_000
+  i += 1
+  f += 0.1; f -= 0.1
+  f += 0.1; f -= 0.1
+  f += 0.1; f -= 0.1
+end
+
+2.1.1p2	7.672394992
+2.1.1p2	7.590249908
+2.1.1p2	7.527846298
+2.0.0p376	7.31416121
+2.0.0p376	7.366938421
+2.0.0p376	7.156408174
+1.9.3p488	14.797468171
+1.9.3p488	14.857652139
+1.9.3p488	14.735862663
+built-ruby	7.213649405
+built-ruby	7.208945686
+built-ruby	7.22655946
+
+-----------------------------------------------------------
+vm1_gc_short_lived
+
+i = 0
+while i<30_000_000 # while loop 1
+  a = '' # short-lived String
+  b = ''
+  c = ''
+  d = ''
+  e = ''
+  f = ''
+  i+=1
+end
+
+2.1.1p2	16.354438472
+2.1.1p2	17.479923676
+2.1.1p2	16.201619487
+2.0.0p376	18.022202905
+2.0.0p376	18.749350944
+2.0.0p376	18.029200211
+1.9.3p488	16.666284986
+1.9.3p488	16.763958493
+1.9.3p488	16.672549902
+built-ruby	17.632733632
+built-ruby	17.603268312
+built-ruby	17.684197876
+
+-----------------------------------------------------------
+vm1_gc_short_with_complex_long
+
+def nested_hash h, n
+  if n == 0
+    ''
+  else
+    10.times{
+      h[Object.new] = nested_hash(h, n-1)
+    }
+  end
+end
+
+long_lived = Hash.new
+nested_hash long_lived, 6
+
+GC.start
+GC.start
+
+i = 0
+while i<30_000_000 # while loop 1
+  a = '' # short-lived String
+  b = ''
+  c = ''
+  d = ''
+  e = ''
+  f = ''
+  i+=1
+end
+
+
+2.1.1p2	19.749551741
+2.1.1p2	20.497971607
+2.1.1p2	19.461852158
+2.0.0p376	24.726133639
+2.0.0p376	24.697958313
+2.0.0p376	24.747355761
+1.9.3p488	23.835080023
+1.9.3p488	24.229396395
+1.9.3p488	24.019063104
+built-ruby	22.053013014
+built-ruby	22.037752322
+built-ruby	21.910051619
+
+-----------------------------------------------------------
+vm1_gc_short_with_long
+
+long_lived = Array.new(1_000_000){|i| "#{i}"}
+GC.start
+GC.start
+i = 0
+while i<30_000_000 # while loop 1
+  a = '' # short-lived String
+  b = ''
+  c = ''
+  d = ''
+  e = ''
+  f = ''
+  i+=1
+end
+
+2.1.1p2	18.738246468
+2.1.1p2	18.65635979
+2.1.1p2	18.376634322
+2.0.0p376	18.363461132
+2.0.0p376	24.010786878
+2.0.0p376	18.568151712
+1.9.3p488	21.583486996
+1.9.3p488	21.486761785
+1.9.3p488	21.544051572
+built-ruby	19.109453069
+built-ruby	19.136796054
+built-ruby	19.197600939
+
+-----------------------------------------------------------
+vm1_gc_short_with_symbol
+
+# make many symbols
+50_000.times{|i| sym = "sym#{i}".to_sym}
+GC.start
+GC.start
+
+i = 0
+while i<30_000_000 # while loop 1
+  a = '' # short-lived String
+  b = ''
+  c = ''
+  d = ''
+  e = ''
+  f = ''
+  i+=1
+end
+
+2.1.1p2	17.607051815
+2.1.1p2	16.454005715
+2.1.1p2	17.962624407
+2.0.0p376	19.462213192
+2.0.0p376	19.739876683
+2.0.0p376	20.211408001
+1.9.3p488	25.613229473
+1.9.3p488	25.465865524
+1.9.3p488	25.861330256
+built-ruby	18.21449568
+built-ruby	18.20941459
+built-ruby	18.124094601
+
+-----------------------------------------------------------
+vm1_gc_wb_ary
+
+long_lived = []
+GC.start
+GC.start
+
+i = 0
+short_lived = ''
+while i<30_000_000 # while loop 1
+  long_lived[0] = short_lived # write barrier
+  i+=1
+end
+
+2.1.1p2	2.11372716
+2.1.1p2	2.069224189
+2.1.1p2	2.047298548
+2.0.0p376	2.591035026
+2.0.0p376	2.61392602
+2.0.0p376	2.733018863
+1.9.3p488	3.246594975
+1.9.3p488	3.233117333
+1.9.3p488	3.22822937
+built-ruby	2.019038737
+built-ruby	2.022293222
+built-ruby	2.022725175
+
+-----------------------------------------------------------
+vm1_gc_wb_obj
+
+class C
+  attr_accessor :foo
+end
+long_lived = C.new
+GC.start
+GC.start
+
+i = 0
+short_lived = ''
+while i<30_000_000 # while loop 1
+  long_lived.foo = short_lived # write barrier
+  i+=1
+end
+
+2.1.1p2	1.992506972
+2.1.1p2	2.028893116
+2.1.1p2	1.995013945
+2.0.0p376	1.885999531
+2.0.0p376	1.893648939
+2.0.0p376	1.887488606
+1.9.3p488	2.652582357
+1.9.3p488	2.641259987
+1.9.3p488	2.646537905
+built-ruby	1.965355443
+built-ruby	1.96755683
+built-ruby	1.971315126
+
+-----------------------------------------------------------
+vm1_ivar
+
+@a = 1
+
+i = 0
+while i<30_000_000 # while loop 1
+  i += 1
+  j = @a
+  k = @a
+end
+
+2.1.1p2	1.651301913
+2.1.1p2	1.645192952
+2.1.1p2	1.648823827
+2.0.0p376	1.737422786
+2.0.0p376	1.734967042
+2.0.0p376	1.740483143
+1.9.3p488	1.559872328
+1.9.3p488	1.544298297
+1.9.3p488	1.557555182
+built-ruby	1.626257428
+built-ruby	1.628656716
+built-ruby	1.632817842
+
+-----------------------------------------------------------
+vm1_ivar_set
+
+i = 0
+while i<30_000_000 # while loop 1
+  i += 1
+  @a = 1
+  @b = 2
+end
+
+2.1.1p2	1.686721591
+2.1.1p2	1.75923068
+2.1.1p2	1.688951032
+2.0.0p376	1.84424446
+2.0.0p376	1.823195358
+2.0.0p376	1.820696792
+1.9.3p488	1.647520006
+1.9.3p488	1.64732676
+1.9.3p488	1.643226255
+built-ruby	1.667926466
+built-ruby	1.634020383
+built-ruby	1.639892362
+
+-----------------------------------------------------------
+vm1_length
+
+a = 'abc'
+b = [1, 2, 3]
+i = 0
+while i<30_000_000 # while loop 1
+  i += 1
+  a.length
+  b.length
+end
+
+
+2.1.1p2	1.975137206
+2.1.1p2	1.953630039
+2.1.1p2	1.930210003
+2.0.0p376	1.989163778
+2.0.0p376	1.990141074
+2.0.0p376	2.011646148
+1.9.3p488	2.07867249
+1.9.3p488	2.083037849
+1.9.3p488	2.084673056
+built-ruby	1.91686367
+built-ruby	1.918245924
+built-ruby	1.917445624
+
+-----------------------------------------------------------
+vm1_lvar_init
+
+def m v
+  unless v
+    # unreachable code
+    v1 = v2 = v3 = v4 = v5 = v6 = v7 = v8 = v9 = v10 =
+    v11 = v12 = v13 = v14 = v15 = v16 = v17 = v18 = v19 = v20 =
+    v21 = v22 = v23 = v24 = v25 = v26 = v27 = v28 = v29 = v30 =
+    v31 = v32 = v33 = v34 = v35 = v36 = v37 = v38 = v39 = v40 =
+    v41 = v42 = v43 = v44 = v45 = v46 = v47 = v48 = v49 = v50 = 1
+  end
+end
+
+i = 0
+
+while i<30_000_000 # while loop 1
+  i += 1
+  m i
+end
+
+
+2.1.1p2	3.193636602
+2.1.1p2	3.158286962
+2.1.1p2	3.16873438
+2.0.0p376	3.288344898
+2.0.0p376	3.325140895
+2.0.0p376	3.256994777
+1.9.3p488	4.113974469
+1.9.3p488	4.12816333
+1.9.3p488	4.138351484
+built-ruby	3.138107335
+built-ruby	3.148367883
+built-ruby	3.154749836
+
+-----------------------------------------------------------
+vm1_lvar_set
+
+i = 0
+while i<30_000_000 # while loop 1
+  i += 1
+  a = b = c = d = e = f = g = h = j = k = l = m = n = o = p = q = r = 1
+end
+
+2.1.1p2	4.446760364
+2.1.1p2	4.441891048
+2.1.1p2	4.492995041
+2.0.0p376	5.012843104
+2.0.0p376	5.034391071
+2.0.0p376	4.986981391
+1.9.3p488	4.92278342
+1.9.3p488	4.919785111
+1.9.3p488	4.930220827
+built-ruby	4.471231761
+built-ruby	4.387350486
+built-ruby	4.396807256
+
+-----------------------------------------------------------
+vm1_neq
+
+i = 0
+obj1 = Object.new
+obj2 = Object.new
+
+while i<30_000_000 # while loop 1
+  i += 1
+  obj1 != obj2
+end
+
+2.1.1p2	1.851131555
+2.1.1p2	1.839762783
+2.1.1p2	1.832636997
+2.0.0p376	1.855675343
+2.0.0p376	1.859152837
+2.0.0p376	1.887728298
+1.9.3p488	1.804101476
+1.9.3p488	1.799898274
+1.9.3p488	1.808975306
+built-ruby	1.816181301
+built-ruby	1.823526696
+built-ruby	1.874333757
+
+-----------------------------------------------------------
+vm1_not
+
+i = 0
+obj = Object.new
+
+while i<30_000_000 # while loop 1
+  i += 1
+  !obj
+end
+
+2.1.1p2	1.432045248
+2.1.1p2	1.440133346
+2.1.1p2	1.429909064
+2.0.0p376	1.473982698
+2.0.0p376	1.485058753
+2.0.0p376	1.477913258
+1.9.3p488	1.46778087
+1.9.3p488	1.466583057
+1.9.3p488	1.468273937
+built-ruby	1.410472799
+built-ruby	1.415770987
+built-ruby	1.410204867
+
+-----------------------------------------------------------
+vm1_rescue
+
+i = 0
+while i<30_000_000 # while loop 1
+  i += 1
+  begin
+  rescue
+  end
+end
+
+2.1.1p2	1.217479355
+2.1.1p2	1.214806994
+2.1.1p2	1.212244795
+2.0.0p376	1.252360235
+2.0.0p376	1.256780158
+2.0.0p376	1.260671394
+1.9.3p488	1.258301308
+1.9.3p488	1.289819214
+1.9.3p488	1.257280827
+built-ruby	1.19422248
+built-ruby	1.197507647
+built-ruby	1.194209979
+
+-----------------------------------------------------------
+vm1_simplereturn
+
+def m
+  return 1
+end
+i = 0
+while i<30_000_000 # while loop 1
+  i += 1
+  m
+end
+
+
+2.1.1p2	1.911557467
+2.1.1p2	1.947730415
+2.1.1p2	1.913381173
+2.0.0p376	1.979753575
+2.0.0p376	1.976039536
+2.0.0p376	1.992950785
+1.9.3p488	2.619258181
+1.9.3p488	2.628731411
+1.9.3p488	2.785754197
+built-ruby	1.979002809
+built-ruby	1.967528168
+built-ruby	1.901005828
+
+-----------------------------------------------------------
+vm1_swap
+
+a = 1
+b = 2
+i = 0
+while i<30_000_000 # while loop 1
+  i += 1
+  a, b = b, a
+end
+
+
+2.1.1p2	1.41141457
+2.1.1p2	1.449442579
+2.1.1p2	1.423683288
+2.0.0p376	1.479799744
+2.0.0p376	1.463404858
+2.0.0p376	1.463813584
+1.9.3p488	1.486973813
+1.9.3p488	1.483554304
+1.9.3p488	1.482332767
+built-ruby	1.385348088
+built-ruby	1.388447163
+built-ruby	1.391365791
+
+-----------------------------------------------------------
+vm1_yield
+
+def m
+  i = 0
+  while i<30_000_000 # while loop 1
+    i += 1
+    yield
+  end
+end
+
+m{}
+
+
+2.1.1p2	2.060308683
+2.1.1p2	2.046043255
+2.1.1p2	2.039192745
+2.0.0p376	2.127487568
+2.0.0p376	2.082979505
+2.0.0p376	2.231300204
+1.9.3p488	1.918119317
+1.9.3p488	1.895801326
+1.9.3p488	1.897468058
+built-ruby	2.024717089
+built-ruby	2.027748343
+built-ruby	2.029596587
+
+-----------------------------------------------------------
+vm2_array
+
+i = 0
+while i<6_000_000 # benchmark loop 2
+  i += 1
+  a = [1,2,3,4,5,6,7,8,9,10]
+end
+
+2.1.1p2	1.399610415
+2.1.1p2	1.396094337
+2.1.1p2	1.404857906
+2.0.0p376	1.374769328
+2.0.0p376	1.369445613
+2.0.0p376	1.391357652
+1.9.3p488	1.179195871
+1.9.3p488	1.175892211
+1.9.3p488	1.180778668
+built-ruby	1.370411655
+built-ruby	1.358692055
+built-ruby	1.360086567
+
+-----------------------------------------------------------
+vm2_bigarray
+
+i = 0
+while i<6_000_000 # benchmark loop 2
+  i += 1
+  a = [
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+    1,2,3,4,5,6,7,8,9,10,
+  ]
+end
+
+2.1.1p2	10.264630115
+2.1.1p2	10.217904354
+2.1.1p2	10.369747053
+2.0.0p376	15.03842756
+2.0.0p376	15.382958869
+2.0.0p376	15.084359082
+1.9.3p488	12.331356451
+1.9.3p488	12.305703021
+1.9.3p488	12.286218008
+built-ruby	10.055124519
+built-ruby	10.025445923
+built-ruby	10.142170721
+
+-----------------------------------------------------------
+vm2_bighash
+
+i = 0
+while i<60_000 # benchmark loop 2
+  i += 1
+  a = {0=>0, 1=>1, 2=>2, 3=>3, 4=>4, 5=>5, 6=>6, 7=>7, 8=>8, 9=>9, 10=>10, 11=>11, 12=>12, 13=>13, 14=>14, 15=>15, 16=>16, 17=>17, 18=>18, 19=>19, 20=>20, 21=>21, 22=>22, 23=>23, 24=>24, 25=>25, 26=>26, 27=>27, 28=>28, 29=>29, 30=>30, 31=>31, 32=>32, 33=>33, 34=>34, 35=>35, 36=>36, 37=>37, 38=>38, 39=>39, 40=>40, 41=>41, 42=>42, 43=>43, 44=>44, 45=>45, 46=>46, 47=>47, 48=>48, 49=>49, 50=>50, 51=>51, 52=>52, 53=>53, 54=>54, 55=>55, 56=>56, 57=>57, 58=>58, 59=>59, 60=>60, 61=>61, 62=>62, 63=>63, 64=>64, 65=>65, 66=>66, 67=>67, 68=>68, 69=>69, 70=>70, 71=>71, 72=>72, 73=>73, 74=>74, 75=>75, 76=>76, 77=>77, 78=>78, 79=>79, 80=>80, 81=>81, 82=>82, 83=>83, 84=>84, 85=>85, 86=>86, 87=>87, 88=>88, 89=>89, 90=>90, 91=>91, 92=>92, 93=>93, 94=>94, 95=>95, 96=>96, 97=>97, 98=>98, 99=>99, 100=>100, 101=>101, 102=>102, 103=>103, 104=>104, 105=>105, 106=>106, 107=>107, 108=>108, 109=>109, 110=>110, 111=>111, 112=>112, 113=>113, 114=>114, 115=>115, 116=>116, 117=>117, 118=>118, 119=>119, 120=>120, 121=>121, 122=>122, 123=>123, 124=>124, 125=>125, 126=>126, 127=>127, 128=>128, 129=>129, 130=>130, 131=>131, 132=>132, 133=>133, 134=>134, 135=>135, 136=>136, 137=>137, 138=>138, 139=>139, 140=>140, 141=>141, 142=>142, 143=>143, 144=>144, 145=>145, 146=>146, 147=>147, 148=>148, 149=>149, 150=>150, 151=>151, 152=>152, 153=>153, 154=>154, 155=>155, 156=>156, 157=>157, 158=>158, 159=>159, 160=>160, 161=>161, 162=>162, 163=>163, 164=>164, 165=>165, 166=>166, 167=>167, 168=>168, 169=>169, 170=>170, 171=>171, 172=>172, 173=>173, 174=>174, 175=>175, 176=>176, 177=>177, 178=>178, 179=>179, 180=>180, 181=>181, 182=>182, 183=>183, 184=>184, 185=>185, 186=>186, 187=>187, 188=>188, 189=>189, 190=>190, 191=>191, 192=>192, 193=>193, 194=>194, 195=>195, 196=>196, 197=>197, 198=>198, 199=>199, 200=>200, 201=>201, 202=>202, 203=>203, 204=>204, 205=>205, 206=>206, 207=>207, 208=>208, 209=>209, 210=>210, 211=>211, 212=>212, 213=>213, 214=>214, 215=>215, 216=>216, 217=>217, 218=>218, 219=>219, 220=>220, 221=>221, 222=>222, 223=>223, 224=>224, 225=>225, 226=>226, 227=>227, 228=>228, 229=>229, 230=>230, 231=>231, 232=>232, 233=>233, 234=>234, 235=>235, 236=>236, 237=>237, 238=>238, 239=>239, 240=>240, 241=>241, 242=>242, 243=>243, 244=>244, 245=>245, 246=>246, 247=>247, 248=>248, 249=>249, 250=>250, 251=>251, 252=>252, 253=>253, 254=>254, 255=>255, 256=>256, 257=>257, 258=>258, 259=>259, 260=>260, 261=>261, 262=>262, 263=>263, 264=>264, 265=>265, 266=>266, 267=>267, 268=>268, 269=>269, 270=>270, 271=>271, 272=>272, 273=>273, 274=>274, 275=>275, 276=>276, 277=>277, 278=>278, 279=>279, 280=>280, 281=>281, 282=>282, 283=>283, 284=>284, 285=>285, 286=>286, 287=>287, 288=>288, 289=>289, 290=>290, 291=>291, 292=>292, 293=>293, 294=>294, 295=>295, 296=>296, 297=>297, 298=>298, 299=>299, 300=>300, 301=>301, 302=>302, 303=>303, 304=>304, 305=>305, 306=>306, 307=>307, 308=>308, 309=>309, 310=>310, 311=>311, 312=>312, 313=>313, 314=>314, 315=>315, 316=>316, 317=>317, 318=>318, 319=>319, 320=>320, 321=>321, 322=>322, 323=>323, 324=>324, 325=>325, 326=>326, 327=>327, 328=>328, 329=>329, 330=>330, 331=>331, 332=>332, 333=>333, 334=>334, 335=>335, 336=>336, 337=>337, 338=>338, 339=>339, 340=>340, 341=>341, 342=>342, 343=>343, 344=>344, 345=>345, 346=>346, 347=>347, 348=>348, 349=>349, 350=>350, 351=>351, 352=>352, 353=>353, 354=>354, 355=>355, 356=>356, 357=>357, 358=>358, 359=>359, 360=>360, 361=>361, 362=>362, 363=>363, 364=>364, 365=>365, 366=>366, 367=>367, 368=>368, 369=>369, 370=>370, 371=>371, 372=>372, 373=>373, 374=>374, 375=>375, 376=>376, 377=>377, 378=>378, 379=>379, 380=>380, 381=>381, 382=>382, 383=>383, 384=>384, 385=>385, 386=>386, 387=>387, 388=>388, 389=>389, 390=>390, 391=>391, 392=>392, 393=>393, 394=>394, 395=>395, 396=>396, 397=>397, 398=>398, 399=>399, 400=>400, 401=>401, 402=>402, 403=>403, 404=>404, 405=>405, 406=>406, 407=>407, 408=>408, 409=>409, 410=>410, 411=>411, 412=>412, 413=>413, 414=>414, 415=>415, 416=>416, 417=>417, 418=>418, 419=>419, 420=>420, 421=>421, 422=>422, 423=>423, 424=>424, 425=>425, 426=>426, 427=>427, 428=>428, 429=>429, 430=>430, 431=>431, 432=>432, 433=>433, 434=>434, 435=>435, 436=>436, 437=>437, 438=>438, 439=>439, 440=>440, 441=>441, 442=>442, 443=>443, 444=>444, 445=>445, 446=>446, 447=>447, 448=>448, 449=>449, 450=>450, 451=>451, 452=>452, 453=>453, 454=>454, 455=>455, 456=>456, 457=>457, 458=>458, 459=>459, 460=>460, 461=>461, 462=>462, 463=>463, 464=>464, 465=>465, 466=>466, 467=>467, 468=>468, 469=>469, 470=>470, 471=>471, 472=>472, 473=>473, 474=>474, 475=>475, 476=>476, 477=>477, 478=>478, 479=>479, 480=>480, 481=>481, 482=>482, 483=>483, 484=>484, 485=>485, 486=>486, 487=>487, 488=>488, 489=>489, 490=>490, 491=>491, 492=>492, 493=>493, 494=>494, 495=>495, 496=>496, 497=>497, 498=>498, 499=>499, 500=>500,}
+end
+
+2.1.1p2	8.708721548
+2.1.1p2	8.703545656
+2.1.1p2	8.689516737
+2.0.0p376	7.456086098
+2.0.0p376	7.586461244
+2.0.0p376	7.637138353
+1.9.3p488	7.133979091
+1.9.3p488	7.141972777
+1.9.3p488	7.123901729
+built-ruby	8.748248577
+built-ruby	8.738075767
+built-ruby	8.718884996
+
+-----------------------------------------------------------
+vm2_case
+
+i = 0
+while i<6_000_000 # while loop 2
+  case :foo
+  when :bar
+    raise
+  when :baz
+    raise
+  when :boo
+    raise
+  when :foo
+    i += 1
+  end
+end
+
+
+2.1.1p2	0.438155446
+2.1.1p2	0.439424075
+2.1.1p2	0.435110024
+2.0.0p376	0.461646897
+2.0.0p376	0.446694136
+2.0.0p376	0.451441669
+1.9.3p488	0.538469405
+1.9.3p488	0.505586945
+1.9.3p488	0.507410591
+built-ruby	0.422390381
+built-ruby	0.421881675
+built-ruby	0.427872362
+
+-----------------------------------------------------------
+vm2_defined_method
+
+class Object
+  define_method(:m){}
+end
+
+i = 0
+while i<6_000_000 # benchmark loop 2
+  i += 1
+  m; m; m; m; m; m; m; m;
+end
+
+2.1.1p2	5.078406803
+2.1.1p2	4.97921699
+2.1.1p2	4.988727102
+2.0.0p376	4.686865161
+2.0.0p376	5.227540618
+2.0.0p376	4.951775155
+1.9.3p488	5.541616265
+1.9.3p488	5.627278502
+1.9.3p488	5.549212029
+built-ruby	4.979677551
+built-ruby	4.966996239
+built-ruby	4.925702049
+
+-----------------------------------------------------------
+vm2_dstr
+
+i = 0
+x = y = 'z'
+while i<6_000_000 # benchmark loop 2
+  i += 1
+  str = "foo#{x}bar#{y}baz"
+end
+
+2.1.1p2	3.318497981
+2.1.1p2	3.123272404
+2.1.1p2	3.183275225
+2.0.0p376	2.546805358
+2.0.0p376	2.54991741
+2.0.0p376	2.547267468
+1.9.3p488	3.690557017
+1.9.3p488	3.707872003
+1.9.3p488	3.653699438
+built-ruby	3.084916819
+built-ruby	3.026415389
+built-ruby	3.037353091
+
+-----------------------------------------------------------
+vm2_eval
+
+i = 0
+while i<6_000_000 # benchmark loop 2
+  i += 1
+  eval("1")
+end
+
+
+2.1.1p2	24.963126199
+2.1.1p2	24.730118975
+2.1.1p2	25.235867958
+2.0.0p376	24.351619003
+2.0.0p376	25.655504314
+2.0.0p376	25.151189418
+1.9.3p488	20.106659338
+1.9.3p488	20.765250309
+1.9.3p488	20.543564087
+built-ruby	24.75198845
+built-ruby	24.662147071
+built-ruby	24.909186963
+
+-----------------------------------------------------------
+vm2_method
+
+def m
+  nil
+end
+
+i = 0
+while i<6_000_000 # benchmark loop 2
+  i += 1
+  m; m; m; m; m; m; m; m;
+end
+
+2.1.1p2	2.031805271
+2.1.1p2	1.981497861
+2.1.1p2	1.917166763
+2.0.0p376	1.975791731
+2.0.0p376	1.944534251
+2.0.0p376	1.947663123
+1.9.3p488	2.904225031
+1.9.3p488	2.904936834
+1.9.3p488	2.895767033
+built-ruby	1.926974863
+built-ruby	1.897759031
+built-ruby	1.916441603
+
+-----------------------------------------------------------
+vm2_method_missing
+
+class C
+  def method_missing mid
+  end
+end
+
+obj = C.new
+
+i = 0
+while i<6_000_000 # benchmark loop 2
+  i += 1
+  obj.m; obj.m; obj.m; obj.m; obj.m; obj.m; obj.m; obj.m;
+end
+
+2.1.1p2	3.269892663
+2.1.1p2	3.280654756
+2.1.1p2	3.274865499
+2.0.0p376	3.323373975
+2.0.0p376	3.529904467
+2.0.0p376	3.313923439
+1.9.3p488	6.41524572
+1.9.3p488	6.450529976
+1.9.3p488	6.520826013
+built-ruby	3.29486933
+built-ruby	3.39884326
+built-ruby	3.378026073
+
+-----------------------------------------------------------
+vm2_method_with_block
+
+def m
+  nil
+end
+
+i = 0
+while i<6_000_000 # benchmark loop 2
+  i += 1
+  m{}; m{}; m{}; m{}; m{}; m{}; m{}; m{};
+end
+
+2.1.1p2	2.394775243
+2.1.1p2	2.332457147
+2.1.1p2	2.32531536
+2.0.0p376	2.359325346
+2.0.0p376	2.329397237
+2.0.0p376	2.34571284
+1.9.3p488	2.935163134
+1.9.3p488	3.005877804
+1.9.3p488	2.955553042
+built-ruby	2.293486482
+built-ruby	2.340013175
+built-ruby	2.304630227
+
+-----------------------------------------------------------
+vm2_mutex
+
+require 'thread'
+
+m = Mutex.new
+
+i = 0
+while i<6_000_000 # benchmark loop 2
+  i += 1
+  m.synchronize{}
+end
+
+2.1.1p2	1.390210448
+2.1.1p2	1.394294089
+2.1.1p2	1.387538588
+2.0.0p376	1.368561242
+2.0.0p376	1.377959616
+2.0.0p376	1.355426853
+1.9.3p488	1.695462299
+1.9.3p488	1.654549355
+1.9.3p488	1.668479723
+built-ruby	1.356618401
+built-ruby	1.365110281
+built-ruby	1.352930117
+
+-----------------------------------------------------------
+vm2_poly_method
+
+class C1
+  def m
+    1
+  end
+end
+class C2
+  def m
+    2
+  end
+end
+
+o1 = C1.new
+o2 = C2.new
+
+i = 0
+while i<6_000_000 # benchmark loop 2
+  o = (i % 2 == 0) ? o1 : o2
+  o.m; o.m; o.m; o.m; o.m; o.m; o.m; o.m
+  i += 1
+end
+
+2.1.1p2	3.666109597
+2.1.1p2	3.500719406
+2.1.1p2	3.50326242
+2.0.0p376	3.5821488
+2.0.0p376	3.601298935
+2.0.0p376	3.544228166
+1.9.3p488	3.950665877
+1.9.3p488	3.950880876
+1.9.3p488	3.930929414
+built-ruby	3.528231945
+built-ruby	3.491303261
+built-ruby	3.495308653
+
+-----------------------------------------------------------
+vm2_poly_method_ov
+
+class C1
+  def m
+    1
+  end
+end
+class C2
+  def m
+    2
+  end
+end
+
+o1 = C1.new
+o2 = C2.new
+
+i = 0
+while i<6_000_000 # benchmark loop 2
+  o = (i % 2 == 0) ? o1 : o2
+#  o.m; o.m; o.m; o.m; o.m; o.m; o.m; o.m
+  i += 1
+end
+
+2.1.1p2	0.57402952
+2.1.1p2	0.564696039
+2.1.1p2	0.576155843
+2.0.0p376	0.596220005
+2.0.0p376	0.606991818
+2.0.0p376	0.597182425
+1.9.3p488	0.585785714
+1.9.3p488	0.584966906
+1.9.3p488	0.579782812
+built-ruby	0.551151743
+built-ruby	0.545996911
+built-ruby	0.551130674
+
+-----------------------------------------------------------
+vm2_proc
+
+def m &b
+  b
+end
+
+pr = m{
+  a = 1
+}
+
+i = 0
+while i<6_000_000 # benchmark loop 2
+  i += 1
+  pr.call
+end
+
+
+2.1.1p2	1.000100302
+2.1.1p2	1.007554262
+2.1.1p2	1.004238452
+2.0.0p376	0.983575008
+2.0.0p376	0.977857205
+2.0.0p376	0.971684788
+1.9.3p488	1.07253591
+1.9.3p488	1.057658505
+1.9.3p488	1.08410899
+built-ruby	0.964639559
+built-ruby	0.957468576
+built-ruby	0.972586636
+
+-----------------------------------------------------------
+vm2_raise1
+
+def rec n
+  if n > 0
+    rec n-1
+  else
+    raise
+  end
+end
+
+i = 0
+while i<6_000_000 # benchmark loop 2
+  i += 1
+
+  begin
+    rec 1
+  rescue
+    # ignore
+  end
+end
+
+2.1.1p2	11.129564386
+2.1.1p2	11.044369229
+2.1.1p2	11.160435332
+2.0.0p376	9.944635793
+2.0.0p376	9.833361401
+2.0.0p376	9.889649681
+1.9.3p488	22.787713331
+1.9.3p488	23.076498723
+1.9.3p488	22.790136999
+built-ruby	10.871477811
+built-ruby	11.126720197
+built-ruby	11.177634858
+
+-----------------------------------------------------------
+vm2_raise2
+
+def rec n
+  if n > 0
+    rec n-1
+  else
+    raise
+  end
+end
+
+i = 0
+while i<6_000_000 # benchmark loop 2
+  i += 1
+
+  begin
+    rec 10
+  rescue
+    # ignore
+  end
+end
+
+2.1.1p2	15.080985225
+2.1.1p2	15.095891524
+2.1.1p2	15.227544261
+2.0.0p376	14.522287676
+2.0.0p376	14.260503154
+2.0.0p376	14.336300657
+1.9.3p488	63.644717528
+1.9.3p488	63.785430892
+1.9.3p488	63.760894994
+built-ruby	15.131215144
+built-ruby	16.133435434
+built-ruby	15.483638235
+
+-----------------------------------------------------------
+vm2_regexp
+
+i = 0
+str = 'xxxhogexxx'
+while i<6_000_000 # benchmark loop 2
+  /hoge/ =~ str
+  i += 1
+end
+
+2.1.1p2	2.093059619
+2.1.1p2	2.138573941
+2.1.1p2	2.148718622
+2.0.0p376	2.239748131
+2.0.0p376	2.210431441
+2.0.0p376	2.209933105
+1.9.3p488	1.979903772
+1.9.3p488	1.999482138
+1.9.3p488	1.999600059
+built-ruby	2.075668166
+built-ruby	2.062334216
+built-ruby	2.058782415
+
+-----------------------------------------------------------
+vm2_send
+
+class C
+  def m
+  end
+end
+
+o = C.new
+
+i = 0
+while i<6_000_000 # benchmark loop 2
+  i += 1
+  o.__send__ :m
+end
+
+2.1.1p2	0.744209079
+2.1.1p2	0.747026042
+2.1.1p2	0.739191238
+2.0.0p376	0.748260581
+2.0.0p376	0.746309059
+2.0.0p376	0.733840199
+1.9.3p488	0.673783119
+1.9.3p488	0.677628431
+1.9.3p488	0.674170486
+built-ruby	0.741899431
+built-ruby	0.725064245
+built-ruby	0.734392977
+
+-----------------------------------------------------------
+vm2_super
+
+
+class C
+  def m
+    1
+  end
+end
+
+class CC < C
+  def m
+    super()
+  end
+end
+
+obj = CC.new
+
+i = 0
+while i<6_000_000 # benchmark loop 2
+  obj.m
+  i += 1
+end
+
+2.1.1p2	0.931942868
+2.1.1p2	0.874042108
+2.1.1p2	0.869185849
+2.0.0p376	0.879406083
+2.0.0p376	0.900609565
+2.0.0p376	0.882791368
+1.9.3p488	0.98772519
+1.9.3p488	0.98834306
+1.9.3p488	0.990757261
+built-ruby	0.899972624
+built-ruby	0.872518287
+built-ruby	0.867742873
+
+-----------------------------------------------------------
+vm2_unif1
+
+i = 0
+def m a, b
+end
+
+while i<6_000_000 # benchmark loop 2
+  i += 1
+  m 100, 200
+end
+
+2.1.1p2	0.486152487
+2.1.1p2	0.480681181
+2.1.1p2	0.49136941
+2.0.0p376	0.50039032
+2.0.0p376	0.493129526
+2.0.0p376	0.492092141
+1.9.3p488	0.619943528
+1.9.3p488	0.625350299
+1.9.3p488	0.617386183
+built-ruby	0.466626897
+built-ruby	0.483701448
+built-ruby	0.461068514
+
+-----------------------------------------------------------
+vm2_zsuper
+
+i = 0
+
+class C
+  def m a
+    1
+  end
+end
+
+class CC < C
+  def m a
+    super
+  end
+end
+
+obj = CC.new
+
+while i<6_000_000 # benchmark loop 2
+  obj.m 10
+  i += 1
+end
+
+2.1.1p2	0.911171774
+2.1.1p2	0.905217907
+2.1.1p2	0.959795963
+2.0.0p376	0.935500266
+2.0.0p376	0.912358138
+2.0.0p376	0.916981882
+1.9.3p488	1.013576547
+1.9.3p488	1.010950893
+1.9.3p488	1.013900384
+built-ruby	0.889755632
+built-ruby	0.886486298
+built-ruby	0.902314629
+
+-----------------------------------------------------------
+vm3_backtrace
+
+# get last backtrace
+
+begin
+  caller(0, 0)
+rescue ArgumentError
+  alias caller_orig caller
+  def caller lev, n
+    caller_orig(lev)[0..n]
+  end
+end
+
+def rec n
+  if n < 0
+    100_000.times{
+      caller(0, 1)
+    }
+  else
+    rec(n-1)
+  end
+end
+
+rec 50
+
+2.1.1p2	0.337905518
+2.1.1p2	0.334576925
+2.1.1p2	0.336828284
+2.0.0p376	0.340003471
+2.0.0p376	0.338645579
+2.0.0p376	0.339899035
+1.9.3p488	4.0121004
+1.9.3p488	4.00524381
+1.9.3p488	3.988741396
+built-ruby	0.326732034
+built-ruby	0.300888868
+built-ruby	0.308754794
+
+-----------------------------------------------------------
+vm3_clearmethodcache
+
+i = 0
+while i<200_000
+  i += 1
+
+  Class.new{
+    def m; end
+  }
+end
+
+2.1.1p2	0.749308194
+2.1.1p2	0.760090151
+2.1.1p2	0.751047685
+2.0.0p376	0.91961936
+2.0.0p376	0.888293753
+2.0.0p376	0.885963078
+1.9.3p488	0.581378886
+1.9.3p488	0.578107704
+1.9.3p488	0.573402491
+built-ruby	0.750892878
+built-ruby	0.742474173
+built-ruby	0.743631922
+
+-----------------------------------------------------------
+vm3_gc
+
+#! /usr/bin/ruby
+5000.times do
+  100.times do
+    {"xxxx"=>"yyyy"}
+  end
+  GC.start
+end
+
+2.1.1p2	3.523974765
+2.1.1p2	3.528443018
+2.1.1p2	3.536097577
+2.0.0p376	3.752709588
+2.0.0p376	3.733485503
+2.0.0p376	3.774012856
+1.9.3p488	2.18557964
+1.9.3p488	2.202569186
+1.9.3p488	2.209758274
+built-ruby	1.168107557
+built-ruby	1.171598803
+built-ruby	1.17372139
+
+-----------------------------------------------------------
+vm_thread_alive_check1
+
+5_000.times{
+  t = Thread.new{}
+  while t.alive?
+    Thread.pass
+  end
+}
+
+2.1.1p2	0.21986226
+2.1.1p2	0.247317691
+2.1.1p2	0.242109164
+2.0.0p376	0.242556113
+2.0.0p376	0.237993276
+2.0.0p376	0.241528
+1.9.3p488	0.254730196
+1.9.3p488	0.272113935
+1.9.3p488	0.267837336
+built-ruby	0.237103229
+built-ruby	0.229027222
+built-ruby	0.219774052
+
+-----------------------------------------------------------
+vm_thread_create_join
+
+i = 0
+while i<100_000 # benchmark loop 3
+  i += 1
+  Thread.new{
+  }.join
+end
+
+2.1.1p2	2.5199129
+2.1.1p2	2.50468428
+2.1.1p2	2.547738958
+2.0.0p376	2.529090085
+2.0.0p376	2.470451066
+2.0.0p376	2.479993177
+1.9.3p488	2.374220307
+1.9.3p488	2.430814063
+1.9.3p488	2.369540344
+built-ruby	2.472250262
+built-ruby	2.438205619
+built-ruby	2.46886245
+
+-----------------------------------------------------------
+vm_thread_mutex1
+
+# one thread, one mutex (no contention)
+
+require 'thread'
+m = Mutex.new
+r = 0
+max = 2000
+lmax = max * max
+(1..1).map{
+  Thread.new{
+    i = 0
+    while i<lmax
+      i += 1
+      m.synchronize{
+        r += 1
+      }
+    end
+  }
+}.each{|e|
+  e.join
+}
+raise r.to_s if r != max * max
+
+2.1.1p2	1.069110971
+2.1.1p2	1.051955363
+2.1.1p2	1.04871929
+2.0.0p376	1.031748078
+2.0.0p376	1.032882891
+2.0.0p376	1.075889965
+1.9.3p488	1.225438061
+1.9.3p488	1.238128242
+1.9.3p488	1.232363108
+built-ruby	1.006997173
+built-ruby	1.012283124
+built-ruby	1.027914302
+
+-----------------------------------------------------------
+vm_thread_mutex2
+
+# two threads, one mutex
+
+require 'thread'
+m = Mutex.new
+r = 0
+max = 2000
+lmax = (max * max)/2
+(1..2).map{
+  Thread.new{
+    i = 0
+    while i<lmax
+      i += 1
+      m.synchronize{
+        r += 1
+      }
+    end
+  }
+}.each{|e|
+  e.join
+}
+raise r.to_s if r != max * max
+
+2.1.1p2	2.594181146
+2.1.1p2	2.035880565
+2.1.1p2	4.272031319
+2.0.0p376	2.606843242
+2.0.0p376	3.35797106
+2.0.0p376	1.472005276
+1.9.3p488	6.199306565
+1.9.3p488	5.299131789
+1.9.3p488	3.816598579
+built-ruby	2.141966856
+built-ruby	3.013630689
+built-ruby	3.038732656
+
+-----------------------------------------------------------
+vm_thread_mutex3
+
+# 1000 threads, one mutex
+
+require 'thread'
+m = Mutex.new
+r = 0
+max = 2000
+(1..max).map{
+  Thread.new{
+    i = 0
+    while i<max
+      i += 1
+      m.synchronize{
+        r += 1
+      }
+    end
+  }
+}.each{|e|
+  e.join
+}
+raise r.to_s if r != max * max
+
+2.1.1p2	45.227162393
+2.1.1p2	45.347434156
+2.1.1p2	46.318615842
+2.0.0p376	45.871848425
+2.0.0p376	40.635692211
+2.0.0p376	46.072073977
+1.9.3p488	2.083913451
+1.9.3p488	1.91586773
+1.9.3p488	1.937306731
+built-ruby	47.384238073
+built-ruby	45.618624778
+built-ruby	45.496059624
+
+-----------------------------------------------------------
+vm_thread_pass
+
+# Plenty Thtread.pass
+# A performance may depend on GVL implementation.
+
+tmax = (ARGV.shift || 2).to_i
+lmax = 200_000 / tmax
+
+(1..tmax).map{
+  Thread.new{
+    lmax.times{
+      Thread.pass
+    }
+  }
+}.each{|t| t.join}
+
+
+
+2.1.1p2	0.877160376
+2.1.1p2	0.837595387
+2.1.1p2	0.960614445
+2.0.0p376	0.809343658
+2.0.0p376	0.825551984
+2.0.0p376	0.922237759
+1.9.3p488	0.832432093
+1.9.3p488	0.849370203
+1.9.3p488	0.902365881
+built-ruby	0.8477451
+built-ruby	0.718043754
+built-ruby	0.954391291
+
+-----------------------------------------------------------
+vm_thread_pass_flood
+
+1000.times{
+  Thread.new{loop{Thread.pass}}
+}
+
+i = 0
+while i<10000
+  i += 1
+end
+
+2.1.1p2	0.192918608
+2.1.1p2	0.205846405
+2.1.1p2	0.213304433
+2.0.0p376	0.737199866
+2.0.0p376	1.135482949
+2.0.0p376	0.458019969
+1.9.3p488	0.358179282
+1.9.3p488	0.431877127
+1.9.3p488	0.391525261
+built-ruby	0.162686624
+built-ruby	0.17590686
+built-ruby	0.181104345
+
+-----------------------------------------------------------
+vm_thread_pipe
+
+# Mesure small and plenty pipe read/write.
+# A performance may depend on GVL implementation.
+
+lmax = 100_000
+r, w = IO.pipe
+[Thread.new{
+  lmax.times{
+    w.write('a')
+  }
+  p "w:exit"
+}, Thread.new{
+  lmax.times{
+    r.read(1)
+  }
+  p "r:exit"
+}].each{|t| t.join}
+
+
+2.1.1p2	0.735809097
+2.1.1p2	0.73352273
+2.1.1p2	0.706747822
+2.0.0p376	0.746875942
+2.0.0p376	0.698730219
+2.0.0p376	0.732223456
+1.9.3p488	1.278499328
+1.9.3p488	1.205612434
+1.9.3p488	1.364852542
+built-ruby	0.720206208
+built-ruby	0.687123137
+built-ruby	0.710092883
+
+-----------------------------------------------------------
+vm_thread_queue
+
+require 'thread'
+
+n = 1_000_000
+q = Queue.new
+consumer = Thread.new{
+  while q.pop
+    # consuming
+  end
+}
+
+producer = Thread.new{
+  n.times{
+    q.push true
+  }
+  q.push nil
+}
+
+consumer.join
+
+2.1.1p2	0.301599473
+2.1.1p2	0.273087003
+2.1.1p2	0.270783323
+2.0.0p376	10.268096622
+2.0.0p376	8.936066765
+2.0.0p376	8.208027427
+1.9.3p488	75.522126286
+1.9.3p488	30.452076276
+1.9.3p488	79.924745085
+built-ruby	0.252935645
+built-ruby	0.251738909
+built-ruby	0.252985395
+
+-----------------------------------------------------------
+raw data:
+
+[["app_answer",
+  [[0.079001471, 0.057943092, 0.05785576],
+   [0.077149222, 0.054868975, 0.055616937],
+   [0.065638993, 0.054124429, 0.054177192],
+   [0.054168612, 0.045826915, 0.045720215]]],
+ ["app_aobench",
+  [[69.425340661, 76.969075043, 77.063258853],
+   [82.325498645, 83.275266078, 82.550487982],
+   [141.850479982, 142.214785723, 143.239000403],
+   [74.417428524, 74.669067858, 73.586082636]]],
+ ["app_erb",
+  [[1.749285703, 1.706352387, 1.71834531],
+   [1.669561015, 1.67798542, 1.689677952],
+   [1.698019429, 1.721693899, 1.742072523],
+   [1.587804125, 1.54483426, 1.620948801]]],
+ ["app_factorial",
+  [[1.285994246, 1.292522684, 1.285368521],
+   [1.744015242, 1.741873815, 1.730507917],
+   [1.523960769, 1.517961479, 1.528667744],
+   [1.278028155, 1.273110729, 1.27455148]]],
+ ["app_fib",
+  [[0.733993644, 0.736293695, 0.732203911],
+   [0.75861296, 0.762342251, 0.761132913],
+   [1.038370887, 1.023080028, 1.04417005],
+   [0.713016548, 0.711664791, 0.717230177]]],
+ ["app_mandelbrot",
+  [[1.756899206, 1.728683793, 1.73780253],
+   [1.796689645, 1.854623362, 1.793703712],
+   [2.735009308, 2.738945145, 2.75982591],
+   [1.732332617, 1.771425547, 1.728179342]]],
+ ["app_pentomino",
+  [[25.394053993, 25.459113256, 25.480115296],
+   [25.822064117, 25.990280032, 25.792839253],
+   [25.658088086, 25.688708975, 25.811847585],
+   [25.374510447, 25.101892705, 25.333633604]]],
+ ["app_raise",
+  [[0.535205432, 0.531574438, 0.533359319],
+   [0.470360955, 0.481481432, 0.465260774],
+   [0.68522312, 0.688301612, 0.690771909],
+   [0.520395272, 0.52868439, 0.534823023]]],
+ ["app_strconcat",
+  [[2.12605135, 2.044499507, 2.07114782],
+   [1.958635401, 1.921604131, 1.932386662],
+   [2.132333906, 2.150463068, 2.13620292],
+   [1.963557725, 2.084457316, 1.97384775]]],
+ ["app_tak",
+  [[1.254232024, 1.066797704, 1.053908691],
+   [1.078330663, 1.089050031, 1.118363391],
+   [1.54047083, 1.519832716, 1.53134639],
+   [1.043838494, 1.049557738, 1.033060655]]],
+ ["app_tarai",
+  [[0.865043604, 0.876291788, 0.890482772],
+   [0.908662752, 0.90376786, 0.907304761],
+   [1.245148684, 1.212351573, 1.211816705],
+   [0.918461365, 0.858298238, 0.877273137]]],
+ ["app_uri",
+  [[1.072664847, 1.08318319, 1.0798666],
+   [1.160840933, 1.152138077, 1.132281696],
+   [1.016699384, 1.01039743, 1.013173711],
+   [1.030709277, 1.039832666, 1.030203523]]],
+ ["hash_flatten",
+  [[1.093450256, 1.072834489, 1.059204883],
+   [4.806619731, 4.829730743, 4.820447539],
+   [5.036770665, 4.964707995, 4.995842551],
+   [1.065245552, 1.094629593, 1.072202417]]],
+ ["hash_keys",
+  [[0.48464151, 0.488808423, 0.481457345],
+   [4.946435108, 4.921745778, 4.973200177],
+   [4.755155348, 4.802404248, 4.819967973],
+   [0.440614797, 0.447680953, 0.448429104]]],
+ ["hash_shift",
+  [[0.07101143, 0.073897441, 0.074029246],
+   [7.25662479, 7.505232385, 7.933590328],
+   [0.045627937, 0.048452292, 0.04904537],
+   [0.055669542, 0.056166952, 0.059682668]]],
+ ["hash_values",
+  [[0.487204331, 0.465978246, 0.464859686],
+   [4.985229613, 5.016448687, 4.949670954],
+   [4.734046374, 4.791969983, 4.703456458],
+   [0.439269008, 0.440311825, 0.442602625]]],
+ ["io_file_create",
+  [[3.200149475, 3.122910371, 3.096148731],
+   [3.088906599, 3.033186914, 3.015205328],
+   [3.014382965, 2.973884146, 2.975148865],
+   [3.040699554, 3.1102514, 3.156787392]]],
+ ["io_file_read",
+  [[1.687088354, 1.852802979, 1.684822657],
+   [3.43023949, 3.308704108, 3.334191694],
+   [3.376634203, 3.419459798, 3.332819531],
+   [1.648188427, 1.734275095, 1.750423473]]],
+ ["io_file_write",
+  [[1.420462147, 1.438970976, 1.382406163],
+   [1.389655399, 1.463264742, 1.38747586],
+   [1.330121572, 1.312064771, 1.310651587],
+   [1.365101591, 1.45021982, 1.399518526]]],
+ ["io_select",
+  [[2.015763139, 2.008971412, 2.006046833],
+   [1.94879247, 1.984501954, 1.966673831],
+   [1.794977372, 1.783085189, 1.755904049],
+   [1.939105881, 1.990485696, 1.944771803]]],
+ ["io_select2",
+  [[2.277549168, 2.285405977, 2.27258254],
+   [2.203796563, 2.211722523, 2.219968651],
+   [2.033182669, 2.047188446, 2.045441076],
+   [2.21794788, 2.233898538, 2.247271811]]],
+ ["io_select3",
+  [[0.061801228, 0.062767648, 0.064186725],
+   [0.061113782, 0.061118522, 0.061262032],
+   [0.041331125, 0.042962465, 0.069498372],
+   [0.073670165, 0.063006516, 0.058922492]]],
+ ["loop_for",
+  [[1.949608466, 1.939432353, 1.935497347],
+   [2.159024353, 1.982051848, 1.971469542],
+   [2.118480324, 2.106888263, 2.138650568],
+   [1.934366687, 1.915405986, 1.920339613]]],
+ ["loop_generator",
+  [[0.644192961, 0.651344865, 0.654675201],
+   [0.655064356, 0.655673535, 0.652626391],
+   [0.650265601, 0.653277908, 0.653827594],
+   [0.625932119, 0.626175219, 0.624536128]]],
+ ["loop_times",
+  [[1.8933814, 1.816698522, 1.78067384],
+   [1.811918606, 1.808197164, 1.862652899],
+   [1.88436647, 1.882195366, 1.887960761],
+   [1.76495453, 1.828411768, 1.78164165]]],
+ ["loop_whileloop",
+  [[0.965615672, 0.965471771, 0.971880391],
+   [1.006675627, 1.014553397, 1.009214128],
+   [0.996054099, 0.999761145, 0.995366346],
+   [0.947786809, 0.949830198, 0.947861735]]],
+ ["loop_whileloop2",
+  [[0.227992575, 0.227535821, 0.225819288],
+   [0.228381589, 0.228313692, 0.229365057],
+   [0.213540028, 0.218287143, 0.214444554],
+   [0.206572538, 0.208076531, 0.205972213]]],
+ ["so_ackermann",
+  [[0.919471202, 0.90475102, 0.900102668],
+   [0.92744216, 0.91978071, 0.923394939],
+   [1.155061648, 1.157337226, 1.146755277],
+   [0.890950672, 0.888476761, 0.895495539]]],
+ ["so_array",
+  [[1.311969305, 1.315259766, 1.32211104],
+   [1.630070687, 1.600277574, 1.600374238],
+   [1.979663094, 1.974931073, 1.980621516],
+   [1.283354792, 1.297100305, 1.285621887]]],
+ ["so_binary_trees",
+  [[9.480816808, 9.412322369, 9.387130447],
+   [10.324918222, 10.364071563, 10.44331964],
+   [12.568960143, 12.625001772, 12.651614252],
+   [9.57924413, 9.582905844, 9.645934314]]],
+ ["so_concatenate",
+  [[6.970786433, 6.847819826, 6.879669295],
+   [6.005488054, 5.988622545, 6.015560516],
+   [6.199086806, 6.221498036, 6.416786164],
+   [6.963911855, 6.994377037, 6.930142738]]],
+ ["so_count_words",
+  [[0.382386193, 0.368530724, 0.36498845],
+   [0.356356917, 0.352903642, 0.35752114],
+   [0.356712924, 0.361132404, 0.335917097],
+   [0.335140411, 0.334096846, 0.330024225]]],
+ ["so_exception",
+  [[0.505334614, 0.521924017, 0.553330497],
+   [0.495830984, 0.485948881, 0.481840396],
+   [1.394555091, 1.409269882, 1.411014445],
+   [0.480290237, 0.496510099, 0.503124211]]],
+ ["so_fannkuch",
+  [[1.833460763, 1.841311448, 1.814631804],
+   [1.928535634, 1.941636453, 1.937198103],
+   [1.894535171, 1.899407468, 1.913852262],
+   [1.634599169, 1.620981261, 1.625619227]]],
+ ["so_fasta",
+  [[3.085696966, 3.094524673, 3.093821476],
+   [3.189902318, 3.155448217, 3.150605205],
+   [3.559003891, 3.544424047, 3.530938338],
+   [3.054886404, 3.071244692, 3.053020532]]],
+ ["so_k_nucleotide",
+  [[2.004287862, 2.044404827, 2.028956995],
+   [2.207149649, 2.192891235, 2.189942133],
+   [2.275697579, 2.317133916, 2.293104316],
+   [2.026609428, 2.043838635, 2.023890538]]],
+ ["so_lists",
+  [[0.857270803, 0.859371044, 0.856720827],
+   [0.869932713, 0.868465855, 0.867310138],
+   [1.249389205, 1.232740257, 1.229154985],
+   [0.833462363, 0.832049457, 0.835530279]]],
+ ["so_mandelbrot",
+  [[3.271310653, 3.339483243, 3.387342105],
+   [3.439407909, 3.330253401, 3.337192013],
+   [6.833009801, 6.840192687, 6.828956305],
+   [3.158032975, 3.14377698, 3.141914052]]],
+ ["so_matrix",
+  [[0.906919637, 0.904319023, 0.906524433],
+   [0.918164142, 0.90388361, 0.90297848],
+   [1.205113743, 1.207916326, 1.217783708],
+   [0.886869561, 0.897255733, 0.903505774]]],
+ ["so_meteor_contest",
+  [[4.770310982, 4.745272455, 4.780671251],
+   [5.605007505, 5.584323188, 5.627001051],
+   [6.600736712, 6.650094606, 6.613961897],
+   [4.619776702, 4.628333307, 4.597981067]]],
+ ["so_nbody",
+  [[2.091030954, 2.091210722, 2.092373837],
+   [2.171997234, 2.175465721, 2.183483357],
+   [5.088426476, 5.187042806, 5.103024336],
+   [2.0825676, 2.095327411, 2.107528292]]],
+ ["so_nested_loop",
+  [[1.715334458, 1.686681247, 1.680064289],
+   [1.705856035, 1.764603048, 1.688882613],
+   [1.810074577, 1.852538485, 1.769946278],
+   [1.66788693, 1.660925145, 1.659067103]]],
+ ["so_nsieve",
+  [[3.04269232, 3.044027913, 3.036688361],
+   [3.38628245, 3.416787905, 3.400031099],
+   [4.08441091, 4.104029505, 4.122200238],
+   [2.994513488, 2.999180337, 3.041588253]]],
+ ["so_nsieve_bits",
+  [[3.624855503, 3.578858084, 3.595125311],
+   [3.607369935, 3.607519548, 3.597644856],
+   [4.050135741, 4.02780969, 4.010840007],
+   [3.618142968, 3.626912305, 3.599531216]]],
+ ["so_object",
+  [[1.103423471, 1.098709061, 1.108412007],
+   [1.238803957, 1.227028327, 1.232245701],
+   [1.305591299, 1.318063944, 1.311947733],
+   [1.059601991, 1.056370562, 1.052314458]]],
+ ["so_partial_sums",
+  [[3.011677756, 3.01735358, 2.934040871],
+   [2.963509461, 2.971973135, 2.95399581],
+   [6.473274853, 6.597399908, 6.501695492],
+   [2.932738265, 2.923193594, 2.936428246]]],
+ ["so_pidigits",
+  [[0.87576848, 0.869384997, 0.867920842],
+   [1.109259499, 1.097524146, 1.094073345],
+   [0.962845983, 0.954757864, 0.970665742],
+   [0.797462204, 0.795121473, 0.801733404]]],
+ ["so_random",
+  [[0.829499249, 0.827471046, 0.831982024],
+   [0.837663532, 0.860501716, 0.841178092],
+   [1.438466085, 1.448070816, 1.477834075],
+   [0.817223884, 0.810713648, 0.820555525]]],
+ ["so_reverse_complement",
+  [[2.692086144, 2.701691335, 2.674634696],
+   [2.845654165, 2.863059458, 2.851263059],
+   [2.670798632, 2.682685781, 2.667581446],
+   [2.775012026, 2.694821692, 2.701383085]]],
+ ["so_sieve",
+  [[0.995102021, 0.987394256, 1.005183027],
+   [1.1645622, 1.180338073, 1.157866778],
+   [1.389039904, 1.370786, 1.363485176],
+   [0.973614288, 0.971597971, 0.974311993]]],
+ ["so_spectralnorm",
+  [[2.984471123, 2.995295767, 2.991335802],
+   [3.12271612, 3.076011023, 3.076855897],
+   [4.926687647, 4.905470438, 4.885464763],
+   [2.971920434, 2.999398989, 2.946407043]]],
+ ["vm1_attr_ivar",
+  [[2.241341118, 2.244738669, 2.247592127],
+   [2.314897026, 2.311119669, 2.308819136],
+   [3.693649227, 3.692950294, 3.887223422],
+   [2.228231352, 2.2289763, 2.224660623]]],
+ ["vm1_attr_ivar_set",
+  [[2.488253724, 2.447663833, 2.484607758],
+   [2.71668595, 2.707910566, 2.692317086],
+   [4.223192109, 4.216359951, 4.217666553],
+   [2.529094661, 2.495956307, 2.593575817]]],
+ ["vm1_block",
+  [[3.223400764, 3.266342216, 3.203154836],
+   [3.268708754, 3.331810211, 3.294607551],
+   [3.603289299, 3.573361575, 3.571815635],
+   [3.22914119, 3.230898275, 3.2393909]]],
+ ["vm1_const",
+  [[1.420028973, 1.418425279, 1.4202197],
+   [1.470339396, 1.471243795, 1.469064027],
+   [1.474687626, 1.469332119, 1.468054534],
+   [1.407021689, 1.403990388, 1.402875794]]],
+ ["vm1_ensure",
+  [[1.049844543, 1.052332957, 1.065671822],
+   [1.063962383, 1.068100699, 1.06429461],
+   [1.076281411, 1.06368162, 1.064534271],
+   [1.040484818, 1.03194964, 1.059388074]]],
+ ["vm1_float_simple",
+  [[7.672394992, 7.590249908, 7.527846298],
+   [7.31416121, 7.366938421, 7.156408174],
+   [14.797468171, 14.857652139, 14.735862663],
+   [7.213649405, 7.208945686, 7.22655946]]],
+ ["vm1_gc_short_lived",
+  [[16.354438472, 17.479923676, 16.201619487],
+   [18.022202905, 18.749350944, 18.029200211],
+   [16.666284986, 16.763958493, 16.672549902],
+   [17.632733632, 17.603268312, 17.684197876]]],
+ ["vm1_gc_short_with_complex_long",
+  [[19.749551741, 20.497971607, 19.461852158],
+   [24.726133639, 24.697958313, 24.747355761],
+   [23.835080023, 24.229396395, 24.019063104],
+   [22.053013014, 22.037752322, 21.910051619]]],
+ ["vm1_gc_short_with_long",
+  [[18.738246468, 18.65635979, 18.376634322],
+   [18.363461132, 24.010786878, 18.568151712],
+   [21.583486996, 21.486761785, 21.544051572],
+   [19.109453069, 19.136796054, 19.197600939]]],
+ ["vm1_gc_short_with_symbol",
+  [[17.607051815, 16.454005715, 17.962624407],
+   [19.462213192, 19.739876683, 20.211408001],
+   [25.613229473, 25.465865524, 25.861330256],
+   [18.21449568, 18.20941459, 18.124094601]]],
+ ["vm1_gc_wb_ary",
+  [[2.11372716, 2.069224189, 2.047298548],
+   [2.591035026, 2.61392602, 2.733018863],
+   [3.246594975, 3.233117333, 3.22822937],
+   [2.019038737, 2.022293222, 2.022725175]]],
+ ["vm1_gc_wb_obj",
+  [[1.992506972, 2.028893116, 1.995013945],
+   [1.885999531, 1.893648939, 1.887488606],
+   [2.652582357, 2.641259987, 2.646537905],
+   [1.965355443, 1.96755683, 1.971315126]]],
+ ["vm1_ivar",
+  [[1.651301913, 1.645192952, 1.648823827],
+   [1.737422786, 1.734967042, 1.740483143],
+   [1.559872328, 1.544298297, 1.557555182],
+   [1.626257428, 1.628656716, 1.632817842]]],
+ ["vm1_ivar_set",
+  [[1.686721591, 1.75923068, 1.688951032],
+   [1.84424446, 1.823195358, 1.820696792],
+   [1.647520006, 1.64732676, 1.643226255],
+   [1.667926466, 1.634020383, 1.639892362]]],
+ ["vm1_length",
+  [[1.975137206, 1.953630039, 1.930210003],
+   [1.989163778, 1.990141074, 2.011646148],
+   [2.07867249, 2.083037849, 2.084673056],
+   [1.91686367, 1.918245924, 1.917445624]]],
+ ["vm1_lvar_init",
+  [[3.193636602, 3.158286962, 3.16873438],
+   [3.288344898, 3.325140895, 3.256994777],
+   [4.113974469, 4.12816333, 4.138351484],
+   [3.138107335, 3.148367883, 3.154749836]]],
+ ["vm1_lvar_set",
+  [[4.446760364, 4.441891048, 4.492995041],
+   [5.012843104, 5.034391071, 4.986981391],
+   [4.92278342, 4.919785111, 4.930220827],
+   [4.471231761, 4.387350486, 4.396807256]]],
+ ["vm1_neq",
+  [[1.851131555, 1.839762783, 1.832636997],
+   [1.855675343, 1.859152837, 1.887728298],
+   [1.804101476, 1.799898274, 1.808975306],
+   [1.816181301, 1.823526696, 1.874333757]]],
+ ["vm1_not",
+  [[1.432045248, 1.440133346, 1.429909064],
+   [1.473982698, 1.485058753, 1.477913258],
+   [1.46778087, 1.466583057, 1.468273937],
+   [1.410472799, 1.415770987, 1.410204867]]],
+ ["vm1_rescue",
+  [[1.217479355, 1.214806994, 1.212244795],
+   [1.252360235, 1.256780158, 1.260671394],
+   [1.258301308, 1.289819214, 1.257280827],
+   [1.19422248, 1.197507647, 1.194209979]]],
+ ["vm1_simplereturn",
+  [[1.911557467, 1.947730415, 1.913381173],
+   [1.979753575, 1.976039536, 1.992950785],
+   [2.619258181, 2.628731411, 2.785754197],
+   [1.979002809, 1.967528168, 1.901005828]]],
+ ["vm1_swap",
+  [[1.41141457, 1.449442579, 1.423683288],
+   [1.479799744, 1.463404858, 1.463813584],
+   [1.486973813, 1.483554304, 1.482332767],
+   [1.385348088, 1.388447163, 1.391365791]]],
+ ["vm1_yield",
+  [[2.060308683, 2.046043255, 2.039192745],
+   [2.127487568, 2.082979505, 2.231300204],
+   [1.918119317, 1.895801326, 1.897468058],
+   [2.024717089, 2.027748343, 2.029596587]]],
+ ["vm2_array",
+  [[1.399610415, 1.396094337, 1.404857906],
+   [1.374769328, 1.369445613, 1.391357652],
+   [1.179195871, 1.175892211, 1.180778668],
+   [1.370411655, 1.358692055, 1.360086567]]],
+ ["vm2_bigarray",
+  [[10.264630115, 10.217904354, 10.369747053],
+   [15.03842756, 15.382958869, 15.084359082],
+   [12.331356451, 12.305703021, 12.286218008],
+   [10.055124519, 10.025445923, 10.142170721]]],
+ ["vm2_bighash",
+  [[8.708721548, 8.703545656, 8.689516737],
+   [7.456086098, 7.586461244, 7.637138353],
+   [7.133979091, 7.141972777, 7.123901729],
+   [8.748248577, 8.738075767, 8.718884996]]],
+ ["vm2_case",
+  [[0.438155446, 0.439424075, 0.435110024],
+   [0.461646897, 0.446694136, 0.451441669],
+   [0.538469405, 0.505586945, 0.507410591],
+   [0.422390381, 0.421881675, 0.427872362]]],
+ ["vm2_defined_method",
+  [[5.078406803, 4.97921699, 4.988727102],
+   [4.686865161, 5.227540618, 4.951775155],
+   [5.541616265, 5.627278502, 5.549212029],
+   [4.979677551, 4.966996239, 4.925702049]]],
+ ["vm2_dstr",
+  [[3.318497981, 3.123272404, 3.183275225],
+   [2.546805358, 2.54991741, 2.547267468],
+   [3.690557017, 3.707872003, 3.653699438],
+   [3.084916819, 3.026415389, 3.037353091]]],
+ ["vm2_eval",
+  [[24.963126199, 24.730118975, 25.235867958],
+   [24.351619003, 25.655504314, 25.151189418],
+   [20.106659338, 20.765250309, 20.543564087],
+   [24.75198845, 24.662147071, 24.909186963]]],
+ ["vm2_method",
+  [[2.031805271, 1.981497861, 1.917166763],
+   [1.975791731, 1.944534251, 1.947663123],
+   [2.904225031, 2.904936834, 2.895767033],
+   [1.926974863, 1.897759031, 1.916441603]]],
+ ["vm2_method_missing",
+  [[3.269892663, 3.280654756, 3.274865499],
+   [3.323373975, 3.529904467, 3.313923439],
+   [6.41524572, 6.450529976, 6.520826013],
+   [3.29486933, 3.39884326, 3.378026073]]],
+ ["vm2_method_with_block",
+  [[2.394775243, 2.332457147, 2.32531536],
+   [2.359325346, 2.329397237, 2.34571284],
+   [2.935163134, 3.005877804, 2.955553042],
+   [2.293486482, 2.340013175, 2.304630227]]],
+ ["vm2_mutex",
+  [[1.390210448, 1.394294089, 1.387538588],
+   [1.368561242, 1.377959616, 1.355426853],
+   [1.695462299, 1.654549355, 1.668479723],
+   [1.356618401, 1.365110281, 1.352930117]]],
+ ["vm2_poly_method",
+  [[3.666109597, 3.500719406, 3.50326242],
+   [3.5821488, 3.601298935, 3.544228166],
+   [3.950665877, 3.950880876, 3.930929414],
+   [3.528231945, 3.491303261, 3.495308653]]],
+ ["vm2_poly_method_ov",
+  [[0.57402952, 0.564696039, 0.576155843],
+   [0.596220005, 0.606991818, 0.597182425],
+   [0.585785714, 0.584966906, 0.579782812],
+   [0.551151743, 0.545996911, 0.551130674]]],
+ ["vm2_proc",
+  [[1.000100302, 1.007554262, 1.004238452],
+   [0.983575008, 0.977857205, 0.971684788],
+   [1.07253591, 1.057658505, 1.08410899],
+   [0.964639559, 0.957468576, 0.972586636]]],
+ ["vm2_raise1",
+  [[11.129564386, 11.044369229, 11.160435332],
+   [9.944635793, 9.833361401, 9.889649681],
+   [22.787713331, 23.076498723, 22.790136999],
+   [10.871477811, 11.126720197, 11.177634858]]],
+ ["vm2_raise2",
+  [[15.080985225, 15.095891524, 15.227544261],
+   [14.522287676, 14.260503154, 14.336300657],
+   [63.644717528, 63.785430892, 63.760894994],
+   [15.131215144, 16.133435434, 15.483638235]]],
+ ["vm2_regexp",
+  [[2.093059619, 2.138573941, 2.148718622],
+   [2.239748131, 2.210431441, 2.209933105],
+   [1.979903772, 1.999482138, 1.999600059],
+   [2.075668166, 2.062334216, 2.058782415]]],
+ ["vm2_send",
+  [[0.744209079, 0.747026042, 0.739191238],
+   [0.748260581, 0.746309059, 0.733840199],
+   [0.673783119, 0.677628431, 0.674170486],
+   [0.741899431, 0.725064245, 0.734392977]]],
+ ["vm2_super",
+  [[0.931942868, 0.874042108, 0.869185849],
+   [0.879406083, 0.900609565, 0.882791368],
+   [0.98772519, 0.98834306, 0.990757261],
+   [0.899972624, 0.872518287, 0.867742873]]],
+ ["vm2_unif1",
+  [[0.486152487, 0.480681181, 0.49136941],
+   [0.50039032, 0.493129526, 0.492092141],
+   [0.619943528, 0.625350299, 0.617386183],
+   [0.466626897, 0.483701448, 0.461068514]]],
+ ["vm2_zsuper",
+  [[0.911171774, 0.905217907, 0.959795963],
+   [0.935500266, 0.912358138, 0.916981882],
+   [1.013576547, 1.010950893, 1.013900384],
+   [0.889755632, 0.886486298, 0.902314629]]],
+ ["vm3_backtrace",
+  [[0.337905518, 0.334576925, 0.336828284],
+   [0.340003471, 0.338645579, 0.339899035],
+   [4.0121004, 4.00524381, 3.988741396],
+   [0.326732034, 0.300888868, 0.308754794]]],
+ ["vm3_clearmethodcache",
+  [[0.749308194, 0.760090151, 0.751047685],
+   [0.91961936, 0.888293753, 0.885963078],
+   [0.581378886, 0.578107704, 0.573402491],
+   [0.750892878, 0.742474173, 0.743631922]]],
+ ["vm3_gc",
+  [[3.523974765, 3.528443018, 3.536097577],
+   [3.752709588, 3.733485503, 3.774012856],
+   [2.18557964, 2.202569186, 2.209758274],
+   [1.168107557, 1.171598803, 1.17372139]]],
+ ["vm_thread_alive_check1",
+  [[0.21986226, 0.247317691, 0.242109164],
+   [0.242556113, 0.237993276, 0.241528],
+   [0.254730196, 0.272113935, 0.267837336],
+   [0.237103229, 0.229027222, 0.219774052]]],
+ ["vm_thread_create_join",
+  [[2.5199129, 2.50468428, 2.547738958],
+   [2.529090085, 2.470451066, 2.479993177],
+   [2.374220307, 2.430814063, 2.369540344],
+   [2.472250262, 2.438205619, 2.46886245]]],
+ ["vm_thread_mutex1",
+  [[1.069110971, 1.051955363, 1.04871929],
+   [1.031748078, 1.032882891, 1.075889965],
+   [1.225438061, 1.238128242, 1.232363108],
+   [1.006997173, 1.012283124, 1.027914302]]],
+ ["vm_thread_mutex2",
+  [[2.594181146, 2.035880565, 4.272031319],
+   [2.606843242, 3.35797106, 1.472005276],
+   [6.199306565, 5.299131789, 3.816598579],
+   [2.141966856, 3.013630689, 3.038732656]]],
+ ["vm_thread_mutex3",
+  [[45.227162393, 45.347434156, 46.318615842],
+   [45.871848425, 40.635692211, 46.072073977],
+   [2.083913451, 1.91586773, 1.937306731],
+   [47.384238073, 45.618624778, 45.496059624]]],
+ ["vm_thread_pass",
+  [[0.877160376, 0.837595387, 0.960614445],
+   [0.809343658, 0.825551984, 0.922237759],
+   [0.832432093, 0.849370203, 0.902365881],
+   [0.8477451, 0.718043754, 0.954391291]]],
+ ["vm_thread_pass_flood",
+  [[0.192918608, 0.205846405, 0.213304433],
+   [0.737199866, 1.135482949, 0.458019969],
+   [0.358179282, 0.431877127, 0.391525261],
+   [0.162686624, 0.17590686, 0.181104345]]],
+ ["vm_thread_pipe",
+  [[0.735809097, 0.73352273, 0.706747822],
+   [0.746875942, 0.698730219, 0.732223456],
+   [1.278499328, 1.205612434, 1.364852542],
+   [0.720206208, 0.687123137, 0.710092883]]],
+ ["vm_thread_queue",
+  [[0.301599473, 0.273087003, 0.270783323],
+   [10.268096622, 8.936066765, 8.208027427],
+   [75.522126286, 30.452076276, 79.924745085],
+   [0.252935645, 0.251738909, 0.252985395]]]]
+
+Elapsed time: 6409.475028027 (sec)
+-----------------------------------------------------------
+benchmark results:
+minimum results in each 3 measurements.
+Execution time (sec)
+name	2.1.1p2	2.0.0p376	1.9.3p488	built-ruby
+app_answer	0.058	0.055	0.054	0.046
+app_aobench	69.425	82.325	141.850	73.586
+app_erb	1.706	1.670	1.698	1.545
+app_factorial	1.285	1.731	1.518	1.273
+app_fib	0.732	0.759	1.023	0.712
+app_mandelbrot	1.729	1.794	2.735	1.728
+app_pentomino	25.394	25.793	25.658	25.102
+app_raise	0.532	0.465	0.685	0.520
+app_strconcat	2.044	1.922	2.132	1.964
+app_tak	1.054	1.078	1.520	1.033
+app_tarai	0.865	0.904	1.212	0.858
+app_uri	1.073	1.132	1.010	1.030
+hash_flatten	1.059	4.807	4.965	1.065
+hash_keys	0.481	4.922	4.755	0.441
+hash_shift	0.071	7.257	0.046	0.056
+hash_values	0.465	4.950	4.703	0.439
+io_file_create	3.096	3.015	2.974	3.041
+io_file_read	1.685	3.309	3.333	1.648
+io_file_write	1.382	1.387	1.311	1.365
+io_select	2.006	1.949	1.756	1.939
+io_select2	2.273	2.204	2.033	2.218
+io_select3	0.062	0.061	0.041	0.059
+loop_for	1.935	1.971	2.107	1.915
+loop_generator	0.644	0.653	0.650	0.625
+loop_times	1.781	1.808	1.882	1.765
+loop_whileloop	0.965	1.007	0.995	0.948
+loop_whileloop2	0.226	0.228	0.214	0.206
+so_ackermann	0.900	0.920	1.147	0.888
+so_array	1.312	1.600	1.975	1.283
+so_binary_trees	9.387	10.325	12.569	9.579
+so_concatenate	6.848	5.989	6.199	6.930
+so_count_words	0.365	0.353	0.336	0.330
+so_exception	0.505	0.482	1.395	0.480
+so_fannkuch	1.815	1.929	1.895	1.621
+so_fasta	3.086	3.151	3.531	3.053
+so_k_nucleotide	2.004	2.190	2.276	2.024
+so_lists	0.857	0.867	1.229	0.832
+so_mandelbrot	3.271	3.330	6.829	3.142
+so_matrix	0.904	0.903	1.205	0.887
+so_meteor_contest	4.745	5.584	6.601	4.598
+so_nbody	2.091	2.172	5.088	2.083
+so_nested_loop	1.680	1.689	1.770	1.659
+so_nsieve	3.037	3.386	4.084	2.995
+so_nsieve_bits	3.579	3.598	4.011	3.600
+so_object	1.099	1.227	1.306	1.052
+so_partial_sums	2.934	2.954	6.473	2.923
+so_pidigits	0.868	1.094	0.955	0.795
+so_random	0.827	0.838	1.438	0.811
+so_reverse_complement	2.675	2.846	2.668	2.695
+so_sieve	0.987	1.158	1.363	0.972
+so_spectralnorm	2.984	3.076	4.885	2.946
+vm1_attr_ivar*	1.276	1.302	2.698	1.277
+vm1_attr_ivar_set*	1.482	1.686	3.221	1.548
+vm1_block*	2.238	2.262	2.576	2.281
+vm1_const*	0.453	0.462	0.473	0.455
+vm1_ensure*	0.084	0.057	0.068	0.084
+vm1_float_simple*	6.562	6.150	13.740	6.261
+vm1_gc_short_lived*	15.236	17.016	15.671	16.655
+vm1_gc_short_with_complex_long*	18.496	23.691	22.840	20.962
+vm1_gc_short_with_long*	17.411	17.357	20.491	18.162
+vm1_gc_short_with_symbol*	15.489	18.456	24.470	17.176
+vm1_gc_wb_ary*	1.082	1.584	2.233	1.071
+vm1_gc_wb_obj*	1.027	0.879	1.646	1.018
+vm1_ivar*	0.680	0.728	0.549	0.678
+vm1_ivar_set*	0.721	0.814	0.648	0.686
+vm1_length*	0.965	0.982	1.083	0.969
+vm1_lvar_init*	2.193	2.250	3.119	2.190
+vm1_lvar_set*	3.476	3.980	3.924	3.440
+vm1_neq*	0.867	0.849	0.805	0.868
+vm1_not*	0.464	0.467	0.471	0.462
+vm1_rescue*	0.247	0.246	0.262	0.246
+vm1_simplereturn*	0.946	0.969	1.624	0.953
+vm1_swap*	0.446	0.457	0.487	0.438
+vm1_yield*	1.074	1.076	0.900	1.077
+vm2_array*	1.170	1.141	0.962	1.153
+vm2_bigarray*	9.992	14.810	12.073	9.819
+vm2_bighash*	8.464	7.228	6.910	8.513
+vm2_case*	0.209	0.218	0.292	0.216
+vm2_defined_method*	4.753	4.459	5.328	4.720
+vm2_dstr*	2.897	2.318	3.440	2.820
+vm2_eval*	24.504	24.123	19.893	24.456
+vm2_method*	1.691	1.716	2.682	1.692
+vm2_method_missing*	3.044	3.086	6.202	3.089
+vm2_method_with_block*	2.099	2.101	2.722	2.088
+vm2_mutex*	1.162	1.127	1.441	1.147
+vm2_poly_method*	3.275	3.316	3.717	3.285
+vm2_poly_method_ov*	0.339	0.368	0.366	0.340
+vm2_proc*	0.774	0.743	0.844	0.751
+vm2_raise1*	10.819	9.605	22.574	10.666
+vm2_raise2*	14.855	14.032	63.431	14.925
+vm2_regexp*	1.867	1.982	1.766	1.853
+vm2_send*	0.513	0.506	0.460	0.519
+vm2_super*	0.643	0.651	0.774	0.662
+vm2_unif1*	0.255	0.264	0.404	0.255
+vm2_zsuper*	0.679	0.684	0.797	0.681
+vm3_backtrace	0.335	0.339	3.989	0.301
+vm3_clearmethodcache	0.749	0.886	0.573	0.742
+vm3_gc	3.524	3.733	2.186	1.168
+vm_thread_alive_check1	0.220	0.238	0.255	0.220
+vm_thread_create_join	2.505	2.470	2.370	2.438
+vm_thread_mutex1	1.049	1.032	1.225	1.007
+vm_thread_mutex2	2.036	1.472	3.817	2.142
+vm_thread_mutex3	45.227	40.636	1.916	45.496
+vm_thread_pass	0.838	0.809	0.832	0.718
+vm_thread_pass_flood	0.193	0.458	0.358	0.163
+vm_thread_pipe	0.707	0.699	1.206	0.687
+vm_thread_queue	0.271	8.208	30.452	0.252
+
+Speedup ratio: compare with the result of `2.1.1p2' (greater is better)
+name	2.0.0p376	1.9.3p488	built-ruby
+app_answer	1.054	1.069	1.265
+app_aobench	0.843	0.489	0.943
+app_erb	1.022	1.005	1.105
+app_factorial	0.743	0.847	1.010
+app_fib	0.965	0.716	1.029
+app_mandelbrot	0.964	0.632	1.000
+app_pentomino	0.985	0.990	1.012
+app_raise	1.143	0.776	1.021
+app_strconcat	1.064	0.959	1.041
+app_tak	0.977	0.693	1.020
+app_tarai	0.957	0.714	1.008
+app_uri	0.947	1.062	1.041
+hash_flatten	0.220	0.213	0.994
+hash_keys	0.098	0.101	1.093
+hash_shift	0.010	1.556	1.276
+hash_values	0.094	0.099	1.058
+io_file_create	1.027	1.041	1.018
+io_file_read	0.509	0.506	1.022
+io_file_write	0.996	1.055	1.013
+io_select	1.029	1.142	1.035
+io_select2	1.031	1.118	1.025
+io_select3	1.011	1.495	1.049
+loop_for	0.982	0.919	1.010
+loop_generator	0.987	0.991	1.031
+loop_times	0.985	0.946	1.009
+loop_whileloop	0.959	0.970	1.019
+loop_whileloop2	0.989	1.058	1.096
+so_ackermann	0.979	0.785	1.013
+so_array	0.820	0.664	1.022
+so_binary_trees	0.909	0.747	0.980
+so_concatenate	1.143	1.105	0.988
+so_count_words	1.034	1.087	1.106
+so_exception	1.049	0.362	1.052
+so_fannkuch	0.941	0.958	1.119
+so_fasta	0.979	0.874	1.011
+so_k_nucleotide	0.915	0.881	0.990
+so_lists	0.988	0.697	1.030
+so_mandelbrot	0.982	0.479	1.041
+so_matrix	1.001	0.750	1.020
+so_meteor_contest	0.850	0.719	1.032
+so_nbody	0.963	0.411	1.004
+so_nested_loop	0.995	0.949	1.013
+so_nsieve	0.897	0.743	1.014
+so_nsieve_bits	0.995	0.892	0.994
+so_object	0.895	0.842	1.044
+so_partial_sums	0.993	0.453	1.004
+so_pidigits	0.793	0.909	1.092
+so_random	0.988	0.575	1.021
+so_reverse_complement	0.688	0.737	0.729
+so_sieve	0.853	0.724	1.016
+so_spectralnorm	0.970	0.611	1.013
+vm1_attr_ivar*	0.980	0.473	0.999
+vm1_attr_ivar_set*	0.879	0.460	0.957
+vm1_block*	0.989	0.869	0.981
+vm1_const*	0.980	0.958	0.995
+vm1_ensure*	1.473	1.235	1.002
+vm1_float_simple*	1.067	0.478	1.048
+vm1_gc_short_lived*	0.895	0.972	0.915
+vm1_gc_short_with_complex_long*	0.781	0.810	0.882
+vm1_gc_short_with_long*	1.003	0.850	0.959
+vm1_gc_short_with_symbol*	0.839	0.633	0.902
+vm1_gc_wb_ary*	0.683	0.485	1.010
+vm1_gc_wb_obj*	1.168	0.624	1.009
+vm1_ivar*	0.933	1.238	1.002
+vm1_ivar_set*	0.886	1.113	1.051
+vm1_length*	0.982	0.891	0.996
+vm1_lvar_init*	0.974	0.703	1.001
+vm1_lvar_set*	0.873	0.886	1.011
+vm1_neq*	1.021	1.078	0.999
+vm1_not*	0.994	0.986	1.004
+vm1_rescue*	1.004	0.942	1.001
+vm1_simplereturn*	0.976	0.583	0.993
+vm1_swap*	0.976	0.916	1.019
+vm1_yield*	0.998	1.192	0.997
+vm2_array*	1.026	1.216	1.015
+vm2_bigarray*	0.675	0.828	1.018
+vm2_bighash*	1.171	1.225	0.994
+vm2_case*	0.958	0.717	0.969
+vm2_defined_method*	1.066	0.892	1.007
+vm2_dstr*	1.250	0.842	1.027
+vm2_eval*	1.016	1.232	1.002
+vm2_method*	0.986	0.631	1.000
+vm2_method_missing*	0.987	0.491	0.985
+vm2_method_with_block*	0.999	0.771	1.006
+vm2_mutex*	1.031	0.806	1.013
+vm2_poly_method*	0.988	0.881	0.997
+vm2_poly_method_ov*	0.921	0.925	0.997
+vm2_proc*	1.042	0.917	1.030
+vm2_raise1*	1.126	0.479	1.014
+vm2_raise2*	1.059	0.234	0.995
+vm2_regexp*	0.942	1.057	1.008
+vm2_send*	1.016	1.115	0.989
+vm2_super*	0.988	0.831	0.972
+vm2_unif1*	0.966	0.631	0.999
+vm2_zsuper*	0.993	0.852	0.998
+vm3_backtrace	0.988	0.084	1.112
+vm3_clearmethodcache	0.846	1.307	1.009
+vm3_gc	0.944	1.612	3.017
+vm_thread_alive_check1	0.924	0.863	1.000
+vm_thread_create_join	1.014	1.057	1.027
+vm_thread_mutex1	1.016	0.856	1.041
+vm_thread_mutex2	1.383	0.533	0.950
+vm_thread_mutex3	1.113	23.607	0.994
+vm_thread_pass	1.035	1.006	1.166
+vm_thread_pass_flood	0.421	0.539	1.186
+vm_thread_pipe	1.011	0.586	1.029
+vm_thread_queue	0.033	0.009	1.076
+
+Log file: bmlog-20140103-221308.2861
